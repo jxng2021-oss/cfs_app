@@ -57,7 +57,7 @@ npm run test:e2e
 docker rm -f -v cfs-lms-test
 ```
 
-Wait for `pg_isready` to report that PostgreSQL is accepting connections. Set `TEST_DATABASE_URL` to use a different dedicated database with an `_test` suffix. Integration checks create and drop their own isolated PostgreSQL schema. Browser checks seed fixtures into the supplied database, so use disposable data. The browser runner serves the compiled application on port 3001.
+Wait for `pg_isready` to report that PostgreSQL is accepting connections. Set `TEST_DATABASE_URL` to use a different dedicated database with an `_test` suffix. Integration checks create and drop their own isolated PostgreSQL schema. Browser checks seed fixtures into the supplied database, so use disposable data. The browser runner serves the compiled application on port 3004 by default. Set `E2E_PORT` to override it.
 
 ## Docker delivery
 

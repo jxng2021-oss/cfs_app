@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { BookOpen, CircleCheck, FileText, Grid2X2, Plus, UsersRound } from 'lucide-react';
 import { get, list, mutate, type AdminModule, type AdminUser, type AuditEvent, type Enrolment } from './api.js';
-import { Badge, Empty, ErrorMessage, Heading, Pagination, Resource, dateTime, field, submit, useAction, useResource } from './ui.js';
+import { Badge, Empty, ErrorMessage, Heading, Pagination, Resource, SearchField, dateTime, field, submit, useAction, useResource } from './ui.js';
 
 function AccountPicker({ role, label, initial }: { role: 'STUDENT' | 'LECTURER'; label: string; initial?: { id: string; displayName: string } }) {
   const [query, setQuery] = useState('');
@@ -43,7 +44,7 @@ export function AdminUsers({ csrf }: { csrf: string }) {
   const state = useResource(() => list<AdminUser>(path), path);
   const selected = typeof mode === 'object' ? mode : null;
   return <>
-    <Heading title="User accounts" detail="Provision and manage lecturer and student accounts." action={<button onClick={() => { action.clear(); setMode('new'); }}>New user</button>} />
+    <Heading title="User accounts" detail="Manage lecturer and student access." action={<button onClick={() => { action.clear(); setMode('new'); }}><Plus size={17} aria-hidden="true"/>New user</button>} />
     {mode && <section className="panel">
       <h2>{selected ? 'Edit user' : 'New user'}</h2>
       <form className="stack" key={selected?.id ?? 'new'} onSubmit={submit(form => void action.run(async () => {
@@ -66,15 +67,16 @@ export function AdminUsers({ csrf }: { csrf: string }) {
       </form>
     </section>}
     <ErrorMessage message={action.error} />
+    <section className="directory" aria-label="User directory">
     <div className="filters">
-      <label>Search users<input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} /></label>
+      <SearchField label="Search users" placeholder="Name or email address" value={search} onChange={value => { setSearch(value); setPage(1); }} />
       <label>Role<select value={role} onChange={event => { setRole(event.target.value); setPage(1); }}><option value="">All roles</option><option value="ADMIN">Administrator</option><option value="LECTURER">Lecturer</option><option value="STUDENT">Student</option></select></label>
       <label>Account status<select value={isActive} onChange={event => { setIsActive(event.target.value); setPage(1); }}><option value="">All statuses</option><option value="true">Active</option><option value="false">Disabled</option></select></label>
     </div>
     <Resource state={state}>{result => <>
       {!result.data.length ? <Empty>No users match this search.</Empty> : <div className="table-wrap"><table>
         <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
-        <tbody>{result.data.map(user => <tr key={user.id}><th scope="row">{user.displayName}<small>{user.email}</small></th><td><Badge>{user.role}</Badge></td><td><Badge>{user.isActive ? 'ACTIVE' : 'DISABLED'}</Badge></td><td><div className="actions">
+        <tbody>{result.data.map(user => <tr key={user.id}><th scope="row"><div className="table-item"><span className="item-icon"><UsersRound size={16} aria-hidden="true"/></span><span>{user.displayName}<small>{user.email}</small></span></div></th><td><Badge>{user.role}</Badge></td><td><Badge>{user.isActive ? 'ACTIVE' : 'DISABLED'}</Badge></td><td><div className="actions">
           <button className="secondary" onClick={() => { action.clear(); setMode(user); }}>Edit</button>
           {user.role !== 'ADMIN' && <>
             <button className="secondary" disabled={action.pending} onClick={() => {
@@ -93,6 +95,7 @@ export function AdminUsers({ csrf }: { csrf: string }) {
       </table></div>}
       <Pagination page={result} onPage={setPage} />
     </>}</Resource>
+    </section>
     {password && <TemporaryPassword password={password} close={() => setPassword('')} />}
   </>;
 }
@@ -105,9 +108,24 @@ export function AdminModules({ csrf }: { csrf: string }) {
   const action = useAction();
   const query = '/admin/modules?' + new URLSearchParams({ page: String(page), q: search, ...(status ? { status } : {}) });
   const state = useResource(() => list<AdminModule>(query), query);
+  const stats = useResource(async () => {
+    const results = await Promise.all(['', 'ACTIVE', 'DRAFT'].map(status => list<AdminModule>('/admin/modules?pageSize=1' + (status ? '&status=' + status : ''))));
+    return results.map(result => result.pagination.total);
+  }, 'module-metrics');
+  function reload() { state.reload(); stats.reload(); }
   const selected = typeof mode === 'object' ? mode : null;
   return <>
-    <Heading title="Modules" detail="Create offerings, assign lecturers and manage enrolment." action={<button onClick={() => { action.clear(); setMode('new'); }}>New module</button>} />
+    <Heading title="Modules" detail="Manage teaching modules, lecturer assignments and enrolments." action={<button onClick={() => { action.clear(); setMode('new'); }}><Plus size={17} aria-hidden="true"/>New module</button>} />
+    {!stats.error && <section className="metrics" aria-label="Module overview">
+      {[
+        { label: 'Total modules', Icon: Grid2X2, tone: '' },
+        { label: 'Active modules', Icon: CircleCheck, tone: 'active' },
+        { label: 'Draft modules', Icon: FileText, tone: 'draft' },
+      ].map(({ label, Icon, tone }, index) => <div className="metric" key={label}>
+        <span className={'metric-icon ' + tone}><Icon size={19} aria-hidden="true" /></span>
+        <span><span className="metric-label">{label}</span><strong className="metric-value">{stats.value?.[index] ?? '—'}</strong></span>
+      </div>)}
+    </section>}
     {mode && <section className="panel">
       <h2>{selected ? 'Edit module' : 'New module'}</h2>
       <form className="stack" key={selected?.id ?? 'new'} onSubmit={submit(form => void action.run(async () => {
@@ -117,7 +135,7 @@ export function AdminModules({ csrf }: { csrf: string }) {
           ...fields, ...edit, name: field(form, 'name'), description: field(form, 'description'), lecturerId: field(form, 'lecturerId'),
         }, csrf);
         setMode(null);
-        state.reload();
+        reload();
       }))}>
         <div className="form-row">
           <label>Module code<input name="code" required pattern="[A-Za-z0-9\\-]{2,24}" defaultValue={selected?.code} disabled={selected?.status === 'ACTIVE'} /></label>
@@ -130,27 +148,29 @@ export function AdminModules({ csrf }: { csrf: string }) {
       </form>
     </section>}
     <ErrorMessage message={action.error} />
+    <section className="directory" aria-label="Module directory">
     <div className="filters">
-      <label>Search modules<input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} /></label>
+      <SearchField label="Search modules" placeholder="Module code, name or term" value={search} onChange={value => { setSearch(value); setPage(1); }} />
       <label>Status<select value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="ACTIVE">Active</option><option value="ARCHIVED">Archived</option></select></label>
     </div>
     <Resource state={state}>{result => <>
       {!result.data.length ? <Empty>No modules match this search.</Empty> : <div className="table-wrap"><table>
         <thead><tr><th scope="col">Module</th><th scope="col">Lecturer</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
-        <tbody>{result.data.map(module => <tr key={module.id}><th scope="row">{module.code} · {module.name}<small>{module.term}</small></th><td>{module.lecturer.displayName}</td><td><Badge>{module.status}</Badge></td><td><div className="actions">
+        <tbody>{result.data.map(module => <tr key={module.id}><th scope="row"><div className="table-item"><span className="item-icon"><BookOpen size={17} aria-hidden="true"/></span><span>{module.name}<small>{module.code} · {module.term}</small></span></div></th><td>{module.lecturer.displayName}</td><td><Badge>{module.status}</Badge></td><td><div className="actions">
           <Link className="button secondary" to={'/admin/modules/' + module.id + '/enrolments'}>Enrolments ({module.activeEnrolmentCount})</Link>
           {module.status !== 'ARCHIVED' && <button className="secondary" onClick={() => { action.clear(); setMode(module); }}>Edit</button>}
           {module.status === 'DRAFT' && <button disabled={action.pending} onClick={() => void action.run(async () => {
-            await mutate('/admin/modules/' + module.id + '/activate', 'POST', { version: module.version }, csrf); state.reload();
+            await mutate('/admin/modules/' + module.id + '/activate', 'POST', { version: module.version }, csrf); reload();
           })}>Activate</button>}
           {module.status === 'ACTIVE' && <button className="secondary" disabled={action.pending} onClick={() => {
             if (!window.confirm('Archive ' + module.name + '? It will permanently become read-only.')) return;
-            void action.run(async () => { await mutate('/admin/modules/' + module.id + '/archive', 'POST', { version: module.version, confirmUnpublishedGrades: false }, csrf); state.reload(); });
+            void action.run(async () => { await mutate('/admin/modules/' + module.id + '/archive', 'POST', { version: module.version, confirmUnpublishedGrades: false }, csrf); reload(); });
           }}>Archive</button>}
         </div></td></tr>)}</tbody>
       </table></div>}
       <Pagination page={result} onPage={setPage} />
     </>}</Resource>
+    </section>
   </>;
 }
 

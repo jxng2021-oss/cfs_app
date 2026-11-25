@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, matchPath, useLocation, useNavigate } from 'react-router-dom';
+import { ArrowRight, BookOpen, ChevronRight, ClipboardList, Eye, EyeOff, GraduationCap, LayoutGrid, LogOut, Menu, Shield, UserRound, UsersRound } from 'lucide-react';
 import { ApiError, get, mutate, type Session } from './api.js';
 import { AdminAudit, AdminEnrolments, AdminModules, AdminUsers } from './admin.js';
 import { ModuleDetail, ModuleList, ModuleRoster } from './modules.js';
@@ -12,67 +13,96 @@ const roleNames = { ADMIN: 'Administrator', LECTURER: 'Lecturer', STUDENT: 'Stud
 const landing = (session: Session) => session.user.role === 'ADMIN' ? '/admin/modules' : '/modules';
 
 function Brand() {
-  return <div className="brand"><span className="brand-mark" aria-hidden="true">m.</span><span>Mini LMS</span></div>;
+  return <span className="brand"><span className="brand-mark"><GraduationCap aria-hidden="true" strokeWidth={1.9} /></span><span>CFS<span className="brand-separator" />Learn</span></span>;
 }
 
 function AccountForm({ session, setSession, expired, signOut }: { session?: Session; setSession: (session: Session) => void; expired: boolean; signOut?: () => Promise<void> }) {
   const action = useAction();
   const navigate = useNavigate();
   const changing = Boolean(session);
+  const [showPassword, setShowPassword] = useState(false);
   return <main className="auth-layout">
     <section className="auth-panel">
-      <Brand />
-      <div className="auth-copy">
-        <h1>{changing ? 'Change your password' : 'Sign in'}</h1>
-        <p>{expired ? 'Your session expired. Sign in again to continue.' : session?.mustChangePassword ? 'Choose a new password to access your learning workspace.' : changing ? 'Use at least 12 characters.' : 'Access your modules, learning materials and assessments.'}</p>
+      <div className="auth-header"><Brand /></div>
+      <div className="auth-inner">
+        <div className="auth-copy">
+          <h1>{changing ? 'Change your password' : 'Sign in'}</h1>
+          <p>{expired ? 'Your session expired. Sign in again to continue.' : session?.mustChangePassword ? 'Set a new password to finish activating your account.' : changing ? 'Use at least 12 characters.' : 'Use your learning account to access your modules.'}</p>
+        </div>
+        <form className="stack" onSubmit={submit(form => void action.run(async () => {
+          const updated = changing
+            ? await mutate<Session>('/auth/change-password', 'POST', { currentPassword: field(form, 'currentPassword'), newPassword: field(form, 'newPassword') }, session?.csrfToken)
+            : await mutate<Session>('/auth/login', 'POST', { email: field(form, 'email'), password: field(form, 'password') });
+          setSession(updated);
+          navigate(updated.mustChangePassword ? '/change-password' : landing(updated), { replace: true });
+        }))}>
+          {changing ? <>
+            <label>Current password<input type="password" name="currentPassword" autoComplete="current-password" required /></label>
+            <label>New password<input type="password" name="newPassword" autoComplete="new-password" minLength={12} required /></label>
+          </> : <>
+            <label>Email<input type="email" name="email" autoComplete="username" required /></label>
+            <div className="password-field">
+              <label>Password<input type={showPassword ? 'text' : 'password'} name="password" autoComplete="current-password" required /></label>
+              <button type="button" className="password-toggle" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(visible => !visible)}>
+                {showPassword ? <EyeOff size={19} aria-hidden="true" /> : <Eye size={19} aria-hidden="true" />}
+              </button>
+            </div>
+          </>}
+          <ErrorMessage message={action.error} />
+          <button className="auth-submit" disabled={action.pending}>{action.pending ? 'Please wait…' : changing ? 'Change password' : 'Sign in'}<ArrowRight size={18} aria-hidden="true" /></button>
+          {session && !session.mustChangePassword && <Link to="/profile" className="back">Back to profile</Link>}
+          {signOut && <button type="button" className="secondary" disabled={action.pending} onClick={() => void action.run(signOut)}>Sign out</button>}
+        </form>
+        {!changing && <div className="auth-help"><Shield size={16} aria-hidden="true"/><p>For account or password help, contact your LMS administrator.</p></div>}
       </div>
-      <form className="stack" onSubmit={submit(form => void action.run(async () => {
-        const updated = changing
-          ? await mutate<Session>('/auth/change-password', 'POST', { currentPassword: field(form, 'currentPassword'), newPassword: field(form, 'newPassword') }, session?.csrfToken)
-          : await mutate<Session>('/auth/login', 'POST', { email: field(form, 'email'), password: field(form, 'password') });
-        setSession(updated);
-        navigate(updated.mustChangePassword ? '/change-password' : landing(updated), { replace: true });
-      }))}>
-        {changing ? <>
-          <label>Current password<input type="password" name="currentPassword" autoComplete="current-password" required /></label>
-          <label>New password<input type="password" name="newPassword" autoComplete="new-password" minLength={12} required /></label>
-        </> : <>
-          <label>Email<input type="email" name="email" autoComplete="username" required /></label>
-          <label>Password<input type="password" name="password" autoComplete="current-password" required /></label>
-        </>}
-        <ErrorMessage message={action.error} />
-        <button disabled={action.pending}>{action.pending ? 'Please wait…' : changing ? 'Change password' : 'Sign in'}</button>
-        {session && !session.mustChangePassword && <Link to="/profile" className="back">Back to profile</Link>}
-        {signOut && <button type="button" className="secondary" disabled={action.pending} onClick={() => void action.run(signOut)}>Sign out</button>}
-      </form>
     </section>
-    <div className="auth-art" aria-hidden="true"><div className="art-ring"/><div className="art-ring ring-two"/><div className="art-ring ring-three"/><div className="art-dot"/></div>
+    <div className="auth-art" aria-hidden="true" />
   </main>;
 }
 
 function Layout({ session, children, signOut }: { session: Session; children: ReactNode; signOut: () => Promise<void> }) {
   const action = useAction();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { pathname } = useLocation();
+  const admin = session.user.role === 'ADMIN';
+  const context = pathname.startsWith('/admin/users') ? 'User accounts' : pathname.startsWith('/admin/audit') ? 'Audit log' : pathname.startsWith('/profile') ? 'Profile' : admin ? 'Modules' : 'My modules';
+  const moduleId = matchPath('/modules/:moduleId/*', pathname)?.params.moduleId;
+  const modulePath = '/modules/' + moduleId;
+  const initials = session.user.displayName.trim().split(/\s+/u).slice(0, 2).map(part => Array.from(part)[0] ?? '').join('').toUpperCase();
   return <div className="shell">
     <a href="#main-content" className="skip">Skip to content</a>
     <aside className="sidebar">
       <div className="sidebar-header">
         <Link to={landing(session)} aria-label="Mini LMS home"><Brand /></Link>
-        <button className="secondary mobile-menu" aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>Menu</button>
+        <button className="secondary mobile-menu" aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}><Menu size={17} aria-hidden="true"/>Menu</button>
       </div>
       <nav id="main-navigation" className={menuOpen ? 'open' : undefined} aria-label="Main navigation" onClick={event => {
         if (event.target instanceof Element && event.target.closest('a')) setMenuOpen(false);
       }}>
-        {session.user.role === 'ADMIN' ? <>
-          <NavLink to="/admin/modules">Modules</NavLink><NavLink to="/admin/users">User accounts</NavLink><NavLink to="/admin/audit">Audit log</NavLink>
-        </> : <NavLink to="/modules">My modules</NavLink>}
-        <NavLink to="/profile">Profile</NavLink>
+        <p className="nav-title">{admin ? 'Administration' : 'Workspace'}</p>
+        {admin ? <>
+          <NavLink to="/admin/modules"><LayoutGrid size={18} aria-hidden="true"/>Modules</NavLink>
+          <NavLink to="/admin/users"><UsersRound size={18} aria-hidden="true"/>User accounts</NavLink>
+          <NavLink to="/admin/audit"><ClipboardList size={18} aria-hidden="true"/>Audit log</NavLink>
+        </> : <NavLink to="/modules"><BookOpen size={18} aria-hidden="true"/>My modules</NavLink>}
+        <p className="nav-title">Account</p>
+        <NavLink to="/profile"><UserRound size={18} aria-hidden="true"/>Profile</NavLink>
       </nav>
     </aside>
     <div className="workspace">
-      <header className="topbar"><div className="identity"><span className="avatar" aria-hidden="true">{session.user.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{session.user.displayName}</strong><span>{roleNames[session.user.role]}</span></div></div>
-        <button className="secondary" disabled={action.pending} onClick={() => void action.run(signOut)}>Sign out</button></header>
-      <main id="main-content" className="content"><ErrorMessage message={action.error} />{children}</main>
+      <header className="topbar">
+        <div className="workspace-path" aria-hidden="true"><span>{admin ? 'Administration' : 'Workspace'}</span><ChevronRight size={14}/><strong>{context}</strong></div>
+        <div className="topbar-account">
+          <div className="identity"><span className="avatar" aria-hidden="true">{initials}</span><div><strong>{session.user.displayName}</strong><span>{roleNames[session.user.role]}</span></div></div>
+          <button className="secondary sign-out" disabled={action.pending} onClick={() => void action.run(signOut)}><LogOut size={16} aria-hidden="true"/>Sign out</button>
+        </div>
+      </header>
+      {moduleId && <nav className="course-nav" aria-label="Module navigation">
+        <NavLink end to={modulePath}>Overview</NavLink>
+        <NavLink to={modulePath + '/content'}>Content</NavLink>
+        {session.user.role === 'LECTURER' && <NavLink to={modulePath + '/roster'}>Roster</NavLink>}
+      </nav>}
+      <main id="main-content" className="content" tabIndex={-1}><ErrorMessage message={action.error} />{children}</main>
     </div>
   </div>;
 }

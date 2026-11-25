@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ArrowLeft, CircleAlert, Search } from 'lucide-react';
 import type { Page } from './api.js';
 
 export function useResource<T>(load: () => Promise<T>, key: string) {
@@ -21,21 +22,27 @@ export function useResource<T>(load: () => Promise<T>, key: string) {
 }
 
 export function Resource<T>({ state, children }: { state: ReturnType<typeof useResource<T>>; children: (data: T) => ReactNode }) {
-  if (state.pending) return <p className="notice" role="status">Loading…</p>;
-  if (state.error) return <div className="notice" role="alert"><p>{state.error}</p><button className="secondary" onClick={state.reload}>Retry</button></div>;
+  if (state.pending) return <p className="notice" role="status"><span className="loading-dot" aria-hidden="true"/>Loading…</p>;
+  if (state.error) return <div className="notice" role="alert"><CircleAlert size={17} aria-hidden="true"/><div><p>{state.error}</p><button className="secondary" onClick={state.reload}>Retry</button></div></div>;
   return state.value === undefined ? null : children(state.value);
 }
 
 export function Heading({ title, detail, action, parent }: { title: string; detail?: string; action?: ReactNode; parent?: { to: string; label: string } }) {
   return <header className="page-heading">
-    <div>{parent && <Link className="back" to={parent.to}>← {parent.label}</Link>}<h1>{title}</h1>{detail && <p>{detail}</p>}</div>{action}
+    <div>{parent && <Link className="back" to={parent.to}><ArrowLeft size={15} aria-hidden="true"/>{parent.label}</Link>}<h1>{title}</h1>{detail && <p>{detail}</p>}</div>{action}
   </header>;
 }
 
 export function Badge({ children }: { children: string }) {
-  return <span className={'badge ' + children.toLowerCase()}>{children[0] + children.slice(1).toLowerCase()}</span>;
+  return <span className={'badge ' + children.toLowerCase()}><span className="badge-dot" aria-hidden="true"/>{children[0] + children.slice(1).toLowerCase().replaceAll('_', ' ')}</span>;
 }
 export function Empty({ children }: { children: ReactNode }) { return <div className="notice">{children}</div>; }
+
+export function SearchField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+  return <label className="filter-search">{label}<span className="search-input"><Search size={16} aria-hidden="true"/>
+    <input type="search" value={value} placeholder={placeholder} onChange={event => onChange(event.target.value)} />
+  </span></label>;
+}
 
 export function Pagination<T>({ page, onPage }: { page: Page<T>; onPage: (value: number) => void }) {
   if (page.pagination.totalPages <= 1 && page.pagination.page === 1) return null;

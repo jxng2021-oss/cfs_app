@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ArrowUpRight, BookOpen } from 'lucide-react';
 import { get, list, type Enrolment, type Module, type Session } from './api.js';
 import { ProgressSummary } from './learning.js';
 import { Badge, Empty, Heading, Pagination, Resource, useResource } from './ui.js';
@@ -13,9 +14,10 @@ export function ModuleList({ session }: { session: Session }) {
     <Heading title="My modules" detail={session.user.role === 'LECTURER' ? 'Manage the modules assigned to you.' : 'Open an enrolled module to continue learning.'}
       action={<label className="filter-label">Status<select value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><option value="">All statuses</option>{session.user.role === 'LECTURER' && <option value="DRAFT">Draft</option>}<option value="ACTIVE">Active</option><option value="ARCHIVED">Archived</option></select></label>} />
     <Resource state={state}>{result => <>
-      {result.data.length === 0 ? <Empty>No modules match this view.</Empty> : <div className="module-grid">{result.data.map(module => <Link className="module-card" to={'/modules/' + module.id} key={module.id}>
-        <div className="module-card-head"><span className="module-code">{module.code}</span><Badge>{module.status}</Badge></div>
-        <h2>{module.name}</h2><p>{module.description || module.term}</p><div className="module-card-foot"><span>{module.term}</span><span aria-hidden="true">↗</span></div>
+      {result.data.length === 0 ? <Empty>{!status && session.user.role === 'STUDENT' ? 'You are not enrolled in any modules. Contact your administrator if a module is missing.' : 'No modules match this view.'}</Empty> : <div className="module-grid">{result.data.map(module => <Link className="module-card" to={'/modules/' + module.id} key={module.id}>
+        <div className="module-card-head"><span className="module-card-id"><span className="item-icon"><BookOpen size={18} aria-hidden="true"/></span><span className="module-code">{module.code}</span></span><Badge>{module.status}</Badge></div>
+        <div className="module-card-body"><h2>{module.name}</h2>{module.description && <p>{module.description}</p>}</div>
+        <div className="module-card-foot"><span>{module.term}</span><ArrowUpRight size={18} aria-hidden="true"/></div>
       </Link>)}</div>}
       <Pagination page={result} onPage={setPage} />
     </>}</Resource>
@@ -29,12 +31,14 @@ export function ModuleDetail({ session }: { session: Session }) {
   return <Resource state={state}>{module => <>
     <Heading title={module.name} detail={module.code + ' · ' + module.term} parent={{ to: '/modules', label: 'My modules' }} action={<Badge>{module.status}</Badge>} />
     {module.status === 'ARCHIVED' && <Empty>This archived module is read-only.</Empty>}
+    <div className="module-detail">
     <section className="panel"><h2>Module overview</h2><p>{module.description || 'No description has been added.'}</p>
-      <div className="actions"><Link className="button" to={path + '/content'}>Learning content</Link>
+      <div className="actions"><Link className="button" to={path + '/content'}><BookOpen size={16} aria-hidden="true"/>Learning content</Link>
         {session.user.role === 'LECTURER' && <Link className="button secondary" to={path + '/roster'}>View roster</Link>}
       </div>
     </section>
     {session.user.role === 'STUDENT' && <ProgressSummary modulePath={path} />}
+    </div>
   </>}</Resource>;
 }
 

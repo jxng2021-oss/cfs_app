@@ -1,6 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const origin = 'http://localhost:3001';
+const port = Number(process.env.E2E_PORT ?? '3004');
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Use a valid E2E_PORT');
+const origin = 'http://localhost:' + port;
 const database = new URL(process.env.TEST_DATABASE_URL ?? 'postgres://lms:local-test-db-only@localhost:55433/lms_test');
 if (!/^\/[a-z0-9_]+_test$/i.test(database.pathname)) throw new Error('Use a dedicated database ending in _test for browser tests');
 export default defineConfig({
@@ -14,7 +16,7 @@ export default defineConfig({
     timeout: 90_000,
     reuseExistingServer: false,
     env: {
-      NODE_ENV: 'test', PORT: '3001', APP_ORIGIN: origin, DATABASE_URL: database.href,
+      NODE_ENV: 'test', PORT: String(port), APP_ORIGIN: origin, DATABASE_URL: database.href,
       SESSION_PEPPER: 'synthetic-browser-test-session-pepper-32-characters', DEMO_PASSWORD: 'synthetic browser fixture',
       TRUST_PROXY: 'false', COOKIE_SECURE: 'false', STORAGE_DRIVER: 'local', SECRET_ID: '',
     },
