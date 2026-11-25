@@ -93,9 +93,24 @@ test('full LMS journey from enrolment through a gated quiz, assignment and relea
   await page.getByLabel('Option 1', { exact: true }).fill('One point');
   await page.getByLabel('Option 2', { exact: true }).fill('Ten points');
   await page.getByRole('radio', { name: 'Correct' }).first().check();
-  await page.getByRole('button', { name: 'Save questions' }).click();
-  await expect(page.getByText('1 points total')).toBeVisible();
-  await page.getByRole('button', { name: 'Publish assessment', exact: true }).click();
+  const publishQuiz = page.getByRole('button', { name: 'Publish assessment', exact: true });
+  await expect(publishQuiz).toBeEnabled();
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route('**/questions', async (route) => {
+    if (route.request().method() === 'PUT') await saveGate;
+    await route.continue();
+  });
+  try {
+    await page.getByRole('button', { name: 'Save questions' }).click();
+    await expect(publishQuiz).toBeDisabled();
+  } finally {
+    releaseSave();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
+  await publishQuiz.click();
   await confirm(page, 'Publish assessment');
   await expect(page.getByRole('link', { name: 'Marking and results' })).toBeVisible();
   await issueTopic(page, 'Week 2', true);

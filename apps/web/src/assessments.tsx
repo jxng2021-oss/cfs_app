@@ -515,37 +515,24 @@ const newQuestion = (): EditorQuestion => ({
   options: [{ label: '' }, { label: '' }],
   correctOptionIndex: null,
 });
-function QuestionEditor({ path, session, changed }: { path: string; session: Session; changed: () => void }) {
+type QuestionEditorProps = {
+  path: string;
+  session: Session;
+  action: ReturnType<typeof useAction>;
+  busy: boolean;
+  changed: () => void;
+};
+function QuestionEditor(props: QuestionEditorProps) {
+  const { path } = props;
   const state = useResource(() => get<QuizBank>(path + '/questions'), path);
   return (
     <Resource state={state}>
-      {(bank) => (
-        <QuestionForm
-          bank={bank}
-          path={path}
-          session={session}
-          changed={() => {
-            state.reload();
-            changed();
-          }}
-        />
-      )}
+      {(bank) => <QuestionForm {...props} bank={bank} />}
     </Resource>
   );
 }
-function QuestionForm({
-  bank,
-  path,
-  session,
-  changed,
-}: {
-  bank: QuizBank;
-  path: string;
-  session: Session;
-  changed: () => void;
-}) {
+function QuestionForm({ bank, path, session, action, busy, changed }: QuestionEditorProps & { bank: QuizBank }) {
   const [items, setItems] = useState(bank.questions);
-  const action = useAction();
   const [preview, setPreview] = useState(false);
   const update = (index: number, question: EditorQuestion) =>
     setItems((all) => all.map((old, i) => (i === index ? question : old)));
@@ -591,7 +578,7 @@ function QuestionForm({
         )}
       >
         {items.map((q, index) => (
-          <fieldset className="picker" key={q.id ?? index}>
+          <fieldset className="picker" disabled={busy} key={q.id ?? index}>
             <legend>Question {index + 1}</legend>
             {preview ? (
               <>
@@ -740,13 +727,13 @@ function QuestionForm({
             <Button
               type="button"
               variant="outline"
-              disabled={items.length >= 50}
+              disabled={busy || items.length >= 50}
               onClick={() => setItems((all) => [...all, newQuestion()])}
             >
               <Plus aria-hidden="true" />
               Add question
             </Button>
-            <Button disabled={action.pending}>Save questions</Button>
+            <Button disabled={busy}>{action.pending ? 'Saving questions…' : 'Save questions'}</Button>
           </div>
         )}
       </form>
@@ -758,6 +745,8 @@ export function AssessmentEdit({ session, fresh = false }: { session: Session; f
   const { modulePath, listPath, detailPath } = useAssessmentRoute();
   const navigate = useNavigate();
   const action = useAction();
+  const questionAction = useAction();
+  const busy = action.pending || questionAction.pending;
   const confirmation = useConfirmation();
   const key = fresh ? listPath : detailPath;
   const state = useResource(
@@ -793,7 +782,7 @@ export function AssessmentEdit({ session, fresh = false }: { session: Session; f
               <AssessmentForm
                 item={item}
                 topics={topics}
-                pending={action.pending}
+                pending={busy}
                 onSave={(input) =>
                   void action.run(async () => {
                     const saved = await mutate<Assessment>(
@@ -810,7 +799,13 @@ export function AssessmentEdit({ session, fresh = false }: { session: Session; f
             )}
           </Card>
           {item?.type === 'QUIZ' && item.status === 'DRAFT' && module.status !== 'ARCHIVED' && (
-            <QuestionEditor path={detailPath} session={session} changed={state.reload} />
+            <QuestionEditor
+              path={detailPath}
+              session={session}
+              action={questionAction}
+              busy={busy}
+              changed={state.reload}
+            />
           )}
           {item && (
             <div className="actions">
@@ -825,7 +820,7 @@ export function AssessmentEdit({ session, fresh = false }: { session: Session; f
                 module.status !== 'ARCHIVED' && (
                   <>
                     <Button
-                      disabled={action.pending}
+                      disabled={busy}
                       onClick={() =>
                         confirmation.ask({
                           title: 'Publish ' + item.title + '?',
@@ -849,7 +844,7 @@ export function AssessmentEdit({ session, fresh = false }: { session: Session; f
                     </Button>
                     <Button
                       variant="outline"
-                      disabled={action.pending}
+                      disabled={busy}
                       onClick={() =>
                         confirmation.ask({
                           title: 'Delete this draft assessment?',
