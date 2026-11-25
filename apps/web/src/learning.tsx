@@ -1,7 +1,13 @@
+import { Button } from './components/ui/button.js';
+import { Input } from './components/ui/input.js';
+import { Textarea } from './components/ui/textarea.js';
+import { NativeSelect, NativeSelectOption } from './components/ui/native-select.js';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { Card } from './components/ui/card.js';
 import { get, mutate, type Module, type Session } from './api.js';
-import { Badge, Empty, ErrorMessage, Heading, Resource, field, submit, useAction, useResource } from './ui.js';
+import { Badge, Empty, ErrorMessage, Heading, Resource, field, submit, useAction, useConfirmation, useResource } from './ui.js';
 
 type Progress = { completed: number; total: number; percent: number | null };
 type Material = { id: string; title: string; summary: string; type: 'TEXT' | 'LINK'; status: 'DRAFT' | 'PUBLISHED';
@@ -19,18 +25,18 @@ function orderFor<T extends RecordItem>(items: T[], index: number, direction: -1
 
 function OrderControls({ title, index, length, disabled, onMove }: { title: string; index: number; length: number; disabled: boolean; onMove: (move: -1 | 1) => void }) {
   return <div className="actions">
-    <button className="secondary" disabled={disabled || index === 0} aria-label={'Move ' + title + ' up'} onClick={() => onMove(-1)}>↑</button>
-    <button className="secondary" disabled={disabled || index === length - 1} aria-label={'Move ' + title + ' down'} onClick={() => onMove(1)}>↓</button>
+    <Button variant="outline" size="icon" disabled={disabled || index === 0} aria-label={'Move ' + title + ' up'} onClick={() => onMove(-1)}><ChevronUp aria-hidden="true"/></Button>
+    <Button variant="outline" size="icon" disabled={disabled || index === length - 1} aria-label={'Move ' + title + ' down'} onClick={() => onMove(1)}><ChevronDown aria-hidden="true"/></Button>
   </div>;
 }
 
 export function ProgressSummary({ modulePath }: { modulePath: string }) {
   const endpoint = modulePath + '/progress/me';
   const progress = useResource(() => get<{ overall: Progress }>(endpoint), endpoint);
-  return <section className="panel">
+  return <Card className="panel">
     <h2>Learning progress</h2>
     <Resource state={progress}>{item => <ProgressValue progress={item.overall} />}</Resource>
-  </section>;
+  </Card>;
 }
 
 function ProgressValue({ progress }: { progress: Progress }) {
@@ -42,19 +48,19 @@ function ProgressValue({ progress }: { progress: Progress }) {
 
 function TopicFields({ topic }: { topic?: Topic }) {
   return <>
-    <label>Topic title<input name="title" required maxLength={120} defaultValue={topic?.title} /></label>
-    <label>Description<textarea name="description" maxLength={2000} defaultValue={topic?.description} /></label>
+    <label>Topic title<Input name="title" required maxLength={120} defaultValue={topic?.title} /></label>
+    <label>Description<Textarea name="description" maxLength={2000} defaultValue={topic?.description} /></label>
   </>;
 }
 
 function MaterialFields({ material }: { material?: Material }) {
   const [type, setType] = useState(material?.type ?? 'TEXT');
   return <>
-    <label>Material title<input name="title" required maxLength={120} defaultValue={material?.title} /></label>
-    <label>Summary<input name="summary" maxLength={500} defaultValue={material?.summary} /></label>
-    <label>Type<select name="type" value={type} onChange={event => setType(event.target.value as Material['type'])}><option value="TEXT">Text</option><option value="LINK">Link</option></select></label>
-    {type === 'TEXT' ? <label>Text<textarea name="textBody" required maxLength={20000} defaultValue={material?.textBody ?? ''} /></label> :
-      <label>HTTPS link<input name="externalUrl" type="url" required maxLength={2048} defaultValue={material?.externalUrl ?? ''} /></label>}
+    <label>Material title<Input name="title" required maxLength={120} defaultValue={material?.title} /></label>
+    <label>Summary<Input name="summary" maxLength={500} defaultValue={material?.summary} /></label>
+    <label>Type<NativeSelect name="type" value={type} onChange={event => setType(event.target.value as Material['type'])}><NativeSelectOption value="TEXT">Text</NativeSelectOption><NativeSelectOption value="LINK">Link</NativeSelectOption></NativeSelect></label>
+    {type === 'TEXT' ? <label>Text<Textarea name="textBody" required maxLength={20000} defaultValue={material?.textBody ?? ''} /></label> :
+      <label>HTTPS link<Input name="externalUrl" type="url" required maxLength={2048} defaultValue={material?.externalUrl ?? ''} /></label>}
     <label className="checkbox"><input type="checkbox" name="required" defaultChecked={material?.required ?? true} /> Required material</label>
   </>;
 }
@@ -77,12 +83,12 @@ export function TopicList({ session }: { session: Session }) {
     const manage = session.user.role === 'LECTURER' && module.status !== 'ARCHIVED';
     return <>
       <Heading title="Learning content" detail={module.name} parent={{ to: path, label: 'Module overview' }}
-        action={manage && <button onClick={() => setShowNew(true)}>New topic</button>} />
+        action={manage && <Button onClick={() => setShowNew(true)}>New topic</Button>} />
       {module.status === 'ARCHIVED' && <Empty>This archived module is read-only.</Empty>}
       {showNew && manage && <section className="panel"><h2>New topic</h2><form className="stack" onSubmit={submit(form => void action.run(async () => {
         await mutate(endpoint, 'POST', { title: field(form, 'title'), description: field(form, 'description') }, session.csrfToken);
         setShowNew(false); state.reload();
-      }))}><TopicFields /><div className="actions"><button disabled={action.pending}>Create topic</button><button type="button" className="secondary" onClick={() => setShowNew(false)}>Cancel</button></div></form></section>}
+      }))}><TopicFields /><div className="actions"><Button disabled={action.pending}>Create topic</Button><Button type="button" variant="outline" onClick={() => setShowNew(false)}>Cancel</Button></div></form></section>}
       <ErrorMessage message={action.error} />
       {topics.length === 0 ? <Empty>No topics are available.</Empty> : <ol className="learning-list">{topics.map((topic, index) => <li key={topic.id} className="panel">
         <div className="learning-row"><div><Link className="learning-title" to={path + '/content/' + topic.id}>{topic.title}</Link><p>{topic.description}</p></div>
@@ -104,6 +110,7 @@ export function TopicDetail({ session }: { session: Session }) {
   const state = useResource(() => Promise.all([get<Module>(path), get<Topic>(endpoint)]), endpoint);
   const [mode, setMode] = useState<'topic' | 'material' | null>(null);
   const action = useAction();
+  const confirmation = useConfirmation();
   const navigate = useNavigate();
   return <Resource state={state}>{([module, topic]) => {
     const manage = session.user.role === 'LECTURER' && module.status !== 'ARCHIVED';
@@ -113,27 +120,29 @@ export function TopicDetail({ session }: { session: Session }) {
       <Heading title={topic.title} detail={topic.description} parent={{ to: path + '/content', label: 'Learning content' }} action={session.user.role === 'LECTURER' && <Badge>{topic.status}</Badge>} />
       {topic.progress && <section className="panel"><ProgressValue progress={topic.progress} /></section>}
       {manage && <div className="actions topic-actions">
-        <button className="secondary" onClick={() => setMode('topic')}>Edit topic</button>
+        <Button variant="outline" onClick={() => setMode('topic')}>Edit topic</Button>
         {draft && <>
-          <button className="secondary" onClick={() => setMode('material')}>New material</button>
-          <button disabled={action.pending} onClick={() => {
-            if (!window.confirm('Publish this topic? Its material list and publication status will become fixed.')) return;
-            void action.run(async () => { await mutate(endpoint + '/publish', 'POST', { version: topic.version }, session.csrfToken); setMode(null); state.reload(); });
-          }}>Publish topic</button>
-          <button className="secondary" disabled={action.pending} onClick={() => {
-            if (!window.confirm('Delete this draft topic and its materials?')) return;
-            void action.run(async () => { await mutate(endpoint, 'DELETE', undefined, session.csrfToken); navigate(path + '/content'); });
-          }}>Delete topic</button>
+          <Button variant="outline" onClick={() => setMode('material')}>New material</Button>
+          <Button disabled={action.pending} onClick={() => confirmation.ask({
+            title: 'Publish this topic?', detail: 'Publishing fixes the topic’s material list and makes published materials available to eligible students.',
+            label: 'Publish topic', run: () => void action.run(async () => {
+              await mutate(endpoint + '/publish', 'POST', { version: topic.version }, session.csrfToken); setMode(null); state.reload();
+            }),
+          })}>Publish topic</Button>
+          <Button variant="outline" disabled={action.pending} onClick={() => confirmation.ask({
+            title: 'Delete this draft topic?', detail: 'All materials in this draft topic will also be deleted.', label: 'Delete topic', destructive: true,
+            run: () => void action.run(async () => { await mutate(endpoint, 'DELETE', undefined, session.csrfToken); navigate(path + '/content'); }),
+          })}>Delete topic</Button>
         </>}
       </div>}
       {mode === 'topic' && manage && <section className="panel"><h2>Edit topic</h2><form className="stack" onSubmit={submit(form => void action.run(async () => {
         await mutate(endpoint, 'PATCH', { version: topic.version, title: field(form, 'title'), description: field(form, 'description') }, session.csrfToken);
         setMode(null); state.reload();
-      }))}><TopicFields topic={topic} /><div className="actions"><button disabled={action.pending}>Save topic</button><button className="secondary" type="button" onClick={() => setMode(null)}>Cancel</button></div></form></section>}
+      }))}><TopicFields topic={topic} /><div className="actions"><Button disabled={action.pending}>Save topic</Button><Button variant="outline" type="button" onClick={() => setMode(null)}>Cancel</Button></div></form></section>}
       {mode === 'material' && manage && draft && <section className="panel"><h2>New material</h2><form className="stack" onSubmit={submit(form => void action.run(async () => {
         await mutate(endpoint + '/materials', 'POST', materialPayload(form), session.csrfToken);
         setMode(null); state.reload();
-      }))}><MaterialFields /><div className="actions"><button disabled={action.pending}>Create material</button><button className="secondary" type="button" onClick={() => setMode(null)}>Cancel</button></div></form></section>}
+      }))}><MaterialFields /><div className="actions"><Button disabled={action.pending}>Create material</Button><Button variant="outline" type="button" onClick={() => setMode(null)}>Cancel</Button></div></form></section>}
       <ErrorMessage message={action.error} />
       {materials.length === 0 ? <Empty>No materials are available.</Empty> : <ol className="learning-list">{materials.map((item, index) => <li key={item.id} className="panel">
         <div className="learning-row"><div>
@@ -143,6 +152,7 @@ export function TopicDetail({ session }: { session: Session }) {
           void action.run(async () => { await mutate(endpoint + '/material-order', 'PUT', { materialIds: orderFor(materials, index, direction), topicVersion: topic.version }, session.csrfToken); state.reload(); });
         }} />}
       </li>)}</ol>}
+      {confirmation.dialog}
     </>;
   }}</Resource>;
 }
@@ -156,6 +166,7 @@ export function MaterialDetail({ session }: { session: Session }) {
   const state = useResource(() => Promise.all([get<Module>(path), get<Topic>(topicPath), get<Material>(endpoint)]), endpoint);
   const [editing, setEditing] = useState(false);
   const action = useAction();
+  const confirmation = useConfirmation();
   const navigate = useNavigate();
   return <Resource state={state}>{([module, topic, material]) => {
     const manage = session.user.role === 'LECTURER' && module.status !== 'ARCHIVED' && topic.status === 'DRAFT';
@@ -163,26 +174,27 @@ export function MaterialDetail({ session }: { session: Session }) {
       <Heading title={material.title} detail={material.summary} parent={{ to: back, label: topic.title }} action={<Badge>{material.required ? 'REQUIRED' : 'OPTIONAL'}</Badge>} />
       <section className="panel">
         {material.type === 'TEXT' ? <p className="plain-text">{material.textBody}</p> :
-          <a className="button secondary" href={material.externalUrl ?? undefined} target="_blank" rel="noopener noreferrer">Open external link ↗</a>}
+          <Button asChild variant="outline"><a href={material.externalUrl ?? undefined} target="_blank" rel="noopener noreferrer">Open external link<ExternalLink aria-hidden="true"/></a></Button>}
       </section>
       <ErrorMessage message={action.error} />
-      {session.user.role === 'STUDENT' && material.required && (material.completedAt ? <p role="status">Completed</p> : module.status !== 'ARCHIVED' && <button disabled={action.pending} onClick={() => void action.run(async () => {
+      {session.user.role === 'STUDENT' && material.required && (material.completedAt ? <p role="status">Completed</p> : module.status !== 'ARCHIVED' && <Button disabled={action.pending} onClick={() => void action.run(async () => {
         await mutate(endpoint + '/completion', 'PUT', {}, session.csrfToken); state.reload();
-      })}>Mark complete</button>)}
+      })}>Mark complete</Button>)}
       {manage && <div className="actions topic-actions">
-        {material.status === 'DRAFT' && <button className="secondary" onClick={() => setEditing(true)}>Edit material</button>}
-        <button disabled={action.pending} onClick={() => void action.run(async () => {
+        {material.status === 'DRAFT' && <Button variant="outline" onClick={() => setEditing(true)}>Edit material</Button>}
+        <Button disabled={action.pending} onClick={() => void action.run(async () => {
           await mutate(endpoint + (material.status === 'DRAFT' ? '/publish' : '/unpublish'), 'POST', { version: material.version }, session.csrfToken); setEditing(false); state.reload();
-        })}>{material.status === 'DRAFT' ? 'Publish material' : 'Revert to draft'}</button>
-        <button className="secondary" disabled={action.pending} onClick={() => {
-          if (!window.confirm('Delete this material from the draft topic?')) return;
-          void action.run(async () => { await mutate(endpoint, 'DELETE', undefined, session.csrfToken); navigate(back); });
-        }}>Delete material</button>
+        })}>{material.status === 'DRAFT' ? 'Publish material' : 'Revert to draft'}</Button>
+        <Button variant="outline" disabled={action.pending} onClick={() => confirmation.ask({
+          title: 'Delete this material?', detail: 'The material will be removed from this draft topic.', label: 'Delete material', destructive: true,
+          run: () => void action.run(async () => { await mutate(endpoint, 'DELETE', undefined, session.csrfToken); navigate(back); }),
+        })}>Delete material</Button>
       </div>}
       {manage && editing && <section className="panel"><h2>Edit material</h2><form className="stack" onSubmit={submit(form => void action.run(async () => {
         await mutate(endpoint, 'PATCH', { ...materialPayload(form), version: material.version }, session.csrfToken);
         setEditing(false); state.reload();
-      }))}><MaterialFields material={material} /><div className="actions"><button disabled={action.pending}>Save material</button><button className="secondary" type="button" onClick={() => setEditing(false)}>Cancel</button></div></form></section>}
+      }))}><MaterialFields material={material} /><div className="actions"><Button disabled={action.pending}>Save material</Button><Button variant="outline" type="button" onClick={() => setEditing(false)}>Cancel</Button></div></form></section>}
+      {confirmation.dialog}
     </>;
   }}</Resource>;
 }

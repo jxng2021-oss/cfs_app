@@ -65,8 +65,15 @@ test('administrator enrols, lecturer publishes, and student completes learning a
   await page.getByRole('button', { name: 'Publish material' }).click();
   await expect(page.getByRole('button', { name: 'Revert to draft' })).toBeVisible();
   await page.getByRole('link', { name: /Week 1/ }).click();
-  page.once('dialog', dialog => void dialog.accept());
-  await page.getByRole('button', { name: 'Publish topic' }).click();
+  const publish = page.getByRole('button', { name: 'Publish topic', exact: true });
+  await publish.click();
+  const publication = page.getByRole('alertdialog', { name: 'Publish this topic?' });
+  await expect(publication.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(publication).toBeHidden();
+  await expect(publish).toBeFocused();
+  await publish.click();
+  await publication.getByRole('button', { name: 'Publish topic' }).click();
   await expect(page.getByText('Published', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Sign out' }).click();
 

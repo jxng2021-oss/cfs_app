@@ -1,3 +1,5 @@
+import { Button } from './components/ui/button.js';
+import { Input } from './components/ui/input.js';
 import { useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, matchPath, useLocation, useNavigate } from 'react-router-dom';
@@ -7,6 +9,7 @@ import { AdminAudit, AdminEnrolments, AdminModules, AdminUsers } from './admin.j
 import { ModuleDetail, ModuleList, ModuleRoster } from './modules.js';
 import { MaterialDetail, TopicDetail, TopicList } from './learning.js';
 import { ErrorMessage, Heading, Resource, field, submit, useAction, useResource } from './ui.js';
+import './theme.css';
 import './styles.css';
 
 const roleNames = { ADMIN: 'Administrator', LECTURER: 'Lecturer', STUDENT: 'Student' };
@@ -37,21 +40,21 @@ function AccountForm({ session, setSession, expired, signOut }: { session?: Sess
           navigate(updated.mustChangePassword ? '/change-password' : landing(updated), { replace: true });
         }))}>
           {changing ? <>
-            <label>Current password<input type="password" name="currentPassword" autoComplete="current-password" required /></label>
-            <label>New password<input type="password" name="newPassword" autoComplete="new-password" minLength={12} required /></label>
+            <label>Current password<Input type="password" name="currentPassword" autoComplete="current-password" required /></label>
+            <label>New password<Input type="password" name="newPassword" autoComplete="new-password" minLength={12} required /></label>
           </> : <>
-            <label>Email<input type="email" name="email" autoComplete="username" required /></label>
+            <label>Email<Input type="email" name="email" autoComplete="username" required /></label>
             <div className="password-field">
-              <label>Password<input type={showPassword ? 'text' : 'password'} name="password" autoComplete="current-password" required /></label>
-              <button type="button" className="password-toggle" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(visible => !visible)}>
+              <label>Password<Input type={showPassword ? 'text' : 'password'} name="password" autoComplete="current-password" required /></label>
+              <Button type="button" variant="ghost" size="icon" className="password-toggle" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(visible => !visible)}>
                 {showPassword ? <EyeOff size={19} aria-hidden="true" /> : <Eye size={19} aria-hidden="true" />}
-              </button>
+              </Button>
             </div>
           </>}
           <ErrorMessage message={action.error} />
-          <button className="auth-submit" disabled={action.pending}>{action.pending ? 'Please wait…' : changing ? 'Change password' : 'Sign in'}<ArrowRight size={18} aria-hidden="true" /></button>
+          <Button className="auth-submit" disabled={action.pending}>{action.pending ? 'Please wait…' : changing ? 'Change password' : 'Sign in'}<ArrowRight size={18} aria-hidden="true" /></Button>
           {session && !session.mustChangePassword && <Link to="/profile" className="back">Back to profile</Link>}
-          {signOut && <button type="button" className="secondary" disabled={action.pending} onClick={() => void action.run(signOut)}>Sign out</button>}
+          {signOut && <Button type="button" variant="outline" disabled={action.pending} onClick={() => void action.run(signOut)}>Sign out</Button>}
         </form>
         {!changing && <div className="auth-help"><Shield size={16} aria-hidden="true"/><p>For account or password help, contact your LMS administrator.</p></div>}
       </div>
@@ -74,7 +77,7 @@ function Layout({ session, children, signOut }: { session: Session; children: Re
     <aside className="sidebar">
       <div className="sidebar-header">
         <Link to={landing(session)} aria-label="Mini LMS home"><Brand /></Link>
-        <button className="secondary mobile-menu" aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}><Menu size={17} aria-hidden="true"/>Menu</button>
+        <Button variant="outline" size="sm" className="mobile-menu" aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}><Menu size={17} aria-hidden="true"/>Menu</Button>
       </div>
       <nav id="main-navigation" className={menuOpen ? 'open' : undefined} aria-label="Main navigation" onClick={event => {
         if (event.target instanceof Element && event.target.closest('a')) setMenuOpen(false);
@@ -94,7 +97,7 @@ function Layout({ session, children, signOut }: { session: Session; children: Re
         <div className="workspace-path" aria-hidden="true"><span>{admin ? 'Administration' : 'Workspace'}</span><ChevronRight size={14}/><strong>{context}</strong></div>
         <div className="topbar-account">
           <div className="identity"><span className="avatar" aria-hidden="true">{initials}</span><div><strong>{session.user.displayName}</strong><span>{roleNames[session.user.role]}</span></div></div>
-          <button className="secondary sign-out" disabled={action.pending} onClick={() => void action.run(signOut)}><LogOut size={16} aria-hidden="true"/>Sign out</button>
+          <Button variant="outline" size="sm" className="sign-out" disabled={action.pending} onClick={() => void action.run(signOut)}><LogOut size={16} aria-hidden="true"/>Sign out</Button>
         </div>
       </header>
       {moduleId && <nav className="course-nav" aria-label="Module navigation">

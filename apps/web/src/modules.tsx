@@ -1,6 +1,9 @@
+import { NativeSelect, NativeSelectOption } from './components/ui/native-select.js';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from './components/ui/table.js';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowUpRight, BookOpen } from 'lucide-react';
+import { Card } from './components/ui/card.js';
 import { get, list, type Enrolment, type Module, type Session } from './api.js';
 import { ProgressSummary } from './learning.js';
 import { Badge, Empty, Heading, Pagination, Resource, useResource } from './ui.js';
@@ -12,7 +15,7 @@ export function ModuleList({ session }: { session: Session }) {
   const state = useResource(() => list<Module>(query), query);
   return <>
     <Heading title="My modules" detail={session.user.role === 'LECTURER' ? 'Manage the modules assigned to you.' : 'Open an enrolled module to continue learning.'}
-      action={<label className="filter-label">Status<select value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><option value="">All statuses</option>{session.user.role === 'LECTURER' && <option value="DRAFT">Draft</option>}<option value="ACTIVE">Active</option><option value="ARCHIVED">Archived</option></select></label>} />
+      action={<label className="filter-label">Status<NativeSelect value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><NativeSelectOption value="">All statuses</NativeSelectOption>{session.user.role === 'LECTURER' && <NativeSelectOption value="DRAFT">Draft</NativeSelectOption>}<NativeSelectOption value="ACTIVE">Active</NativeSelectOption><NativeSelectOption value="ARCHIVED">Archived</NativeSelectOption></NativeSelect></label>} />
     <Resource state={state}>{result => <>
       {result.data.length === 0 ? <Empty>{!status && session.user.role === 'STUDENT' ? 'You are not enrolled in any modules. Contact your administrator if a module is missing.' : 'No modules match this view.'}</Empty> : <div className="module-grid">{result.data.map(module => <Link className="module-card" to={'/modules/' + module.id} key={module.id}>
         <div className="module-card-head"><span className="module-card-id"><span className="item-icon"><BookOpen size={18} aria-hidden="true"/></span><span className="module-code">{module.code}</span></span><Badge>{module.status}</Badge></div>
@@ -32,11 +35,11 @@ export function ModuleDetail({ session }: { session: Session }) {
     <Heading title={module.name} detail={module.code + ' · ' + module.term} parent={{ to: '/modules', label: 'My modules' }} action={<Badge>{module.status}</Badge>} />
     {module.status === 'ARCHIVED' && <Empty>This archived module is read-only.</Empty>}
     <div className="module-detail">
-    <section className="panel"><h2>Module overview</h2><p>{module.description || 'No description has been added.'}</p>
+    <Card className="panel"><h2>Module overview</h2><p>{module.description || 'No description has been added.'}</p>
       <div className="actions"><Link className="button" to={path + '/content'}><BookOpen size={16} aria-hidden="true"/>Learning content</Link>
         {session.user.role === 'LECTURER' && <Link className="button secondary" to={path + '/roster'}>View roster</Link>}
       </div>
-    </section>
+    </Card>
     {session.user.role === 'STUDENT' && <ProgressSummary modulePath={path} />}
     </div>
   </>}</Resource>;
@@ -50,11 +53,11 @@ export function ModuleRoster() {
   const state = useResource(() => list<Enrolment>(path), path);
   return <>
     <Heading title="Module roster" parent={{ to: '/modules/' + moduleId, label: 'Module overview' }}
-      action={<label className="filter-label">Status<select value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><option value="ACTIVE">Active</option><option value="WITHDRAWN">Withdrawn</option></select></label>} />
+      action={<label className="filter-label">Status<NativeSelect value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><NativeSelectOption value="ACTIVE">Active</NativeSelectOption><NativeSelectOption value="WITHDRAWN">Withdrawn</NativeSelectOption></NativeSelect></label>} />
     <Resource state={state}>{result => <>
-      {result.data.length ? <div className="table-wrap"><table><thead><tr><th scope="col">Student</th><th scope="col">Status</th></tr></thead><tbody>
-        {result.data.map(row => <tr key={row.studentId}><th scope="row">{row.displayName}</th><td><Badge>{row.status}</Badge></td></tr>)}
-      </tbody></table></div> : <Empty>No students have this enrolment status.</Empty>}
+      {result.data.length ? <div className="table-wrap"><Table><TableHeader><TableRow><TableHead scope="col">Student</TableHead><TableHead scope="col">Status</TableHead></TableRow></TableHeader><TableBody>
+        {result.data.map(row => <TableRow key={row.studentId}><TableHead scope="row">{row.displayName}</TableHead><TableCell><Badge>{row.status}</Badge></TableCell></TableRow>)}
+      </TableBody></Table></div> : <Empty>No students have this enrolment status.</Empty>}
       <Pagination page={result} onPage={setPage}/>
     </>}</Resource>
   </>;

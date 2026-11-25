@@ -57,7 +57,7 @@ export function createApp(services: Services, webRoot = resolve('dist/web')) {
 
   if (existsSync(resolve(webRoot, 'index.html'))) {
     app.use('/assets', express.static(resolve(webRoot, 'assets'), { immutable: true, maxAge: '1y', fallthrough: false }));
-    app.get('/{*path}', (_req, res) => res.set('Cache-Control', 'no-cache').sendFile(resolve(webRoot, 'index.html')));
+    app.get('/{*path}', (_req, res) => res.set('Cache-Control', 'no-cache').sendFile('index.html', { root: webRoot }));
   }
   app.use(notFound);
   const errorHandler: ErrorRequestHandler = (error: unknown, _req, res, next) => {
