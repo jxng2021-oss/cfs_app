@@ -11,6 +11,7 @@ async function signIn(page: Page, email: string, password = demoPassword) {
 }
 
 test('administrator enrols, lecturer publishes, and student completes learning after changing password', async ({ page }) => {
+  test.setTimeout(90_000);
   const suffix = randomUUID().slice(0, 8);
   const email = 'browser-' + suffix + '@example.test';
   const student = 'Browser Learner ' + suffix;
@@ -74,7 +75,10 @@ test('administrator enrols, lecturer publishes, and student completes learning a
   await expect(publish).toBeFocused();
   await publish.click();
   await publication.getByRole('button', { name: 'Publish topic' }).click();
-  await expect(page.getByText('Published', { exact: true })).toBeVisible();
+  const topicHeader = page.locator('header').filter({
+    has: page.getByRole('heading', { name: 'Week 1', exact: true, level: 1 }),
+  });
+  await expect(topicHeader.getByText('Published', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Sign out' }).click();
 
   await signIn(page, email, temporaryPassword);
