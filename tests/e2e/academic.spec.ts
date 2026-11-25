@@ -42,7 +42,10 @@ async function issueTopic(page: Page, title: string, lock = false) {
   }
   await page.getByRole('button', { name: 'Publish topic', exact: true }).click();
   await confirm(page, 'Publish topic');
-  await expect(page.getByText('Published', { exact: true })).toBeVisible();
+  const topicHeader = page.locator('header').filter({
+    has: page.getByRole('heading', { name: title, exact: true, level: 1 }),
+  });
+  await expect(topicHeader.getByText('Published', { exact: true })).toBeVisible();
 }
 
 test('full LMS journey from enrolment through a gated quiz, assignment and released grade', async ({ page }) => {
