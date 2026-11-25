@@ -100,8 +100,8 @@ async function fixture(hours = 0, roster: Actor[] = ['student', 'peer']) {
   return { path: '/modules/' + body.data.id, adminPath, moduleId: body.data.id as string };
 }
 function write(actor: Actor, method: 'post' | 'patch' | 'put' | 'delete', path: string) {
-  return request(app)
-    [method]('/api/v1' + path)
+  const client = request(app);
+  return client[method]('/api/v1' + path)
     .set({ Origin: origin, Cookie: sessions[actor].cookie, 'X-CSRF-Token': sessions[actor].csrf });
 }
 function read(actor: Actor, path: string) {
