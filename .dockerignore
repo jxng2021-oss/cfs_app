@@ -1,0 +1,12 @@
+**
+!package.json
+!package-lock.json
+!tsconfig*.json
+!vite.config.ts
+!apps/
+!apps/**
+!migrations/
+!migrations/**
+[Dd][Oo][Cc][Ss]/
+**/.env*
+**/node_modules/

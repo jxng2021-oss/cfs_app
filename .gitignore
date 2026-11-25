@@ -1,0 +1,12 @@
+/[Dd][Oo][Cc][Ss]/
+/node_modules/
+/dist/
+/coverage/
+/playwright-report/
+/test-results/
+/cfs-mini-lms-linux-*.tar.gz
+/.data/
+.env
+.env.*
+!.env.example
+*.log

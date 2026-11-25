@@ -1,0 +1,117 @@
+name: Test and publish container
+
+on:
+  pull_request:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lms-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TEST_DATABASE_URL: postgres://lms:runner-test-only@localhost:5432/lms_test
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: lms
+          POSTGRES_PASSWORD: runner-test-only
+          POSTGRES_DB: lms_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lms -d lms_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:integration
+      - run: npm run build
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Upload browser diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: browser-diagnostics
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Build Linux image
+        env:
+          COMMIT: ${{ github.sha }}
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          docker build --pull --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$COMMIT" \
+            --label "org.opencontainers.image.source=$REPOSITORY_URL" \
+            --tag cfs-mini-lms:verified .
+      - name: Smoke-test the built image
+        run: bash scripts/smoke-image.sh cfs-mini-lms:verified
+      - name: Export the tested image
+        run: docker save cfs-mini-lms:verified | gzip -1 > cfs-mini-lms-linux-amd64.tar.gz
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cfs-mini-lms-linux-amd64
+          path: cfs-mini-lms-linux-amd64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: cfs-mini-lms-linux-amd64
+      - name: Publish the tested image to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+          REF_KIND: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          docker load --input cfs-mini-lms-linux-amd64.tar.gz
+          image="ghcr.io/${REPOSITORY,,}"
+          tags=("sha-$COMMIT")
+          if [[ "$REF_KIND" == "tag" ]]; then
+            [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]
+            tags+=("$REF_NAME")
+          else
+            tags+=(main)
+          fi
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          for tag in "${tags[@]}"; do
+            docker tag cfs-mini-lms:verified "$image:$tag"
+            docker push "$image:$tag"
+          done
