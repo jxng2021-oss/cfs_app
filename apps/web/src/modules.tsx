@@ -5,7 +5,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ArrowUpRight, BookOpen } from 'lucide-react';
 import { Card } from './components/ui/card.js';
 import { get, list, type Enrolment, type Module, type Session } from './api.js';
-import { ProgressSummary } from './learning.js';
+import { ModuleCardProgress, ProgressSummary } from './learning.js';
 import { Badge, Empty, Heading, Pagination, Resource, useResource } from './ui.js';
 
 export function ModuleList({ session }: { session: Session }) {
@@ -17,11 +17,24 @@ export function ModuleList({ session }: { session: Session }) {
     <Heading title="My modules" detail={session.user.role === 'LECTURER' ? 'Manage the modules assigned to you.' : 'Open an enrolled module to continue learning.'}
       action={<label className="filter-label">Status<NativeSelect value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}><NativeSelectOption value="">All statuses</NativeSelectOption>{session.user.role === 'LECTURER' && <NativeSelectOption value="DRAFT">Draft</NativeSelectOption>}<NativeSelectOption value="ACTIVE">Active</NativeSelectOption><NativeSelectOption value="ARCHIVED">Archived</NativeSelectOption></NativeSelect></label>} />
     <Resource state={state}>{result => <>
-      {result.data.length === 0 ? <Empty>{!status && session.user.role === 'STUDENT' ? 'You are not enrolled in any modules. Contact your administrator if a module is missing.' : 'No modules match this view.'}</Empty> : <div className="module-grid">{result.data.map(module => <Link className="module-card" to={'/modules/' + module.id} key={module.id}>
-        <div className="module-card-head"><span className="module-card-id"><span className="item-icon"><BookOpen size={18} aria-hidden="true"/></span><span className="module-code">{module.code}</span></span><Badge>{module.status}</Badge></div>
-        <div className="module-card-body"><h2>{module.name}</h2>{module.description && <p>{module.description}</p>}</div>
-        <div className="module-card-foot"><span>{module.term}</span><ArrowUpRight size={18} aria-hidden="true"/></div>
-      </Link>)}</div>}
+      {result.data.length === 0 ? <Empty>{!status && session.user.role === 'STUDENT' ? 'You are not enrolled in any modules. Contact your administrator if a module is missing.' : 'No modules match this view.'}</Empty> :
+        ['CURRENT','ARCHIVED'].map(group=>{
+          const modules=result.data.filter(module=>(group==='ARCHIVED')===(module.status==='ARCHIVED'));
+          if(!modules.length)return null;
+          return <section key={group} className="module-card-section">
+            {group==='ARCHIVED'&&!status&&<h2>Archived modules</h2>}
+            <div className="module-grid">{modules.map(module=>{
+              const to='/modules/'+module.id;
+              return <Link className="module-card" to={to} key={module.id}>
+                <div className="module-card-head"><span className="module-card-id"><span className="item-icon"><BookOpen size={18} aria-hidden="true"/></span><span className="module-code">{module.code}</span></span><Badge>{module.status}</Badge></div>
+                <div className="module-card-body"><h2>{module.name}</h2>{module.description&&<p>{module.description}</p>}
+                  {session.user.role==='STUDENT'&&<ModuleCardProgress path={to}/>}
+                </div>
+                <div className="module-card-foot"><span>{module.term}</span><ArrowUpRight size={18} aria-hidden="true"/></div>
+              </Link>;
+            })}</div>
+          </section>;
+        })}
       <Pagination page={result} onPage={setPage} />
     </>}</Resource>
   </>;

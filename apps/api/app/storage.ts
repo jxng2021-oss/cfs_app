@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -45,7 +44,8 @@ export function createStorage(config: Config): StorageAdapter {
       return key;
     },
     async open(key) {
-      return createReadStream(join(config.UPLOAD_DIR, validateKey(key)));
+      const handle = await open(join(config.UPLOAD_DIR, validateKey(key)), 'r');
+      return handle.createReadStream();
     },
     async remove(key) {
       await rm(join(config.UPLOAD_DIR, validateKey(key)), { force: true });

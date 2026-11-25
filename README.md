@@ -1,6 +1,6 @@
-# Mini LMS
+# CFS Learn
 
-A role-based learning management system for administrator-provisioned accounts, module enrolment and learning content. The first delivery runs a React client and Express API on one origin with PostgreSQL for application data and sessions. See [implementation status](IMPLEMENTATION_STATUS.md) for acceptance coverage and remaining work.
+CFS Learn is a role-based LMS with administrator-provisioned accounts, enrolled modules, private learning files, assignments, timed quizzes, controlled grade release, prerequisites, lecturer analytics, and announcements. The React client uses shadcn/ui and Lucide React. Express serves the client and API on one origin, with PostgreSQL for application data and sessions. See the [acceptance coverage](IMPLEMENTATION_STATUS.md).
 
 ## Quick start with Docker
 
@@ -22,6 +22,8 @@ docker compose up -d app
 ```
 
 Open [Mini LMS](http://localhost:3000). Every seeded demo account uses your `DEMO_PASSWORD`. Try `admin@example.test`, `lecturer-a@example.test` and `student-a@example.test`. `lecturer-b@example.test` provides a separate ownership scope. `docker compose down` stops the stack and retains its PostgreSQL and upload volumes.
+
+In the demo module SE101, read and complete the required Week 1 materials and achieve at least 70% on Quiz 1 to unlock Week 2. The lecturer can review results and analytics for the existing synthetic activity. Assignment and quiz windows are set relative to the first seed run. Use a fresh demo database for a new timetable, or pass `DEMO_CLOCK_ISO` to the seed command to choose the initial time anchor.
 
 ### Development with Node
 
@@ -61,7 +63,7 @@ Wait for `pg_isready` to report that PostgreSQL is accepting connections. Set `T
 
 ## Docker delivery
 
-On pull requests and pushes, [GitHub Actions](https://github.com/jxng2021-oss/cfs_app/actions) runs lint, type checking, dependency audit, unit tests, PostgreSQL integration tests and a Chromium journey. It builds a Linux/amd64 image, tests migrations, admin bootstrap, startup, SPA assets, sign-in and shutdown inside the container, then uploads the tested image as a downloadable artifact. A separate publish job loads that same artifact and pushes it to GitHub Container Registry on `main` and version tags such as `v0.1.0`. Each publish includes a `sha-<commit>` tag plus the branch or version tag.
+On pull requests and pushes, [GitHub Actions](https://github.com/jxng2021-oss/cfs_app/actions) validates the AWS template and runs lint, type checking, dependency audit, unit tests, PostgreSQL integration tests and Chromium journeys. It builds a Linux/amd64 image, tests migrations, admin bootstrap, startup, SPA assets, sign-in and shutdown inside the container, then uploads the tested image as a downloadable artifact. A separate publish job loads that same artifact and pushes it to GitHub Container Registry on `main` and version tags such as `v0.1.0`. Each publish includes a `sha-<commit>` tag plus the branch or version tag.
 
 ```text
 docker pull ghcr.io/jxng2021-oss/cfs_app:main
@@ -69,6 +71,8 @@ docker build --platform linux/amd64 -t cfs-mini-lms:dev .
 bash scripts/smoke-image.sh cfs-mini-lms:dev
 ```
 
-Private packages require a GHCR login with package read access. Release operators should deploy a specific commit tag or digest. Run migrations once as a release step with `node dist/api/cli.js migrate` before replacing instances. Use `/health` for the ALB liveness check and `/health/ready` to check the database. Use HTTPS and an exact `APP_ORIGIN` for deployment. Enable `TRUST_PROXY=true` only when the app is reachable through the trusted proxy hop. An optional `SECRET_ID` loads the supported database, session pepper and bootstrap configuration from AWS Secrets Manager via the instance role. The storage interface supports private local and S3 objects. The material upload, attachment and download workflows are tracked in the implementation status.
+Private packages require a GHCR login with package read access. Release operators should deploy a specific commit tag or digest. Run migrations once as a release step with `node dist/api/cli.js migrate` before replacing instances. Use `/health` for the ALB liveness check and `/health/ready` to check the database. Set an exact `APP_ORIGIN` and enable `TRUST_PROXY=true` only behind the trusted proxy hop. An optional `SECRET_ID` loads the supported database, session pepper and bootstrap configuration from AWS Secrets Manager via the instance role.
 
-AWS resource provisioning and rollout are manual. This repository builds and publishes the application container. Keep passwords, session keys, infrastructure credentials, actual student data and the private design documents out of Git and image build contexts.
+Uploads use private local storage or private S3 objects. `npm run cleanup-uploads` removes expired unattached uploads and discarded material files in batches of 100. The application checks file type and size and serves attachments through its authorisation rules. Malware scanning and load certification are outside the prototype scope.
+
+AWS provisioning is manual. The [AWS deployment guide](infra/aws/README.md) includes the CloudFormation template, database bootstrap, release steps, and lab verification checklist. Keep passwords, session keys, infrastructure credentials, actual student data and the private design documents out of Git and image build contexts.

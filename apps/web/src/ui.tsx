@@ -1,6 +1,6 @@
 import { Button } from './components/ui/button.js';
 import { Input } from './components/ui/input.js';
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Search } from 'lucide-react';
 import { Badge as StatusBadge } from './components/ui/badge.js';
@@ -12,20 +12,17 @@ import type { Page } from './api.js';
 
 export function useResource<T>(load: () => Promise<T>, key: string) {
   const [revision, setRevision] = useState(0);
-  const [value, setValue] = useState<T>();
-  const [error, setError] = useState('');
-  const [pending, setPending] = useState(true);
+  const [settled,setSettled]=useState<{key:string;revision:number;value?:T;error:string}>();
+  const reload=useCallback(()=>setRevision(count=>count+1),[]);
   useEffect(() => {
     let current = true;
-    setPending(true);
-    setError('');
-    load().then(result => { if (current) setValue(result); })
-      .catch(error => { if (current) setError(error instanceof Error ? error.message : 'Something went wrong.'); })
-      .finally(() => { if (current) setPending(false); });
+    load().then(result => { if (current) setSettled({key,revision,value:result,error:''}); })
+      .catch(error => { if (current) setSettled({key,revision,error:error instanceof Error ? error.message : 'Something went wrong.'}); });
     return () => { current = false; };
     // The key identifies every input needed by load.
   }, [key, revision]);
-  return { value, error, pending, reload: () => setRevision(count => count + 1) };
+  const result=settled?.key===key&&settled.revision===revision?settled:undefined;
+  return {value:result?.value,error:result?.error??'',pending:!result,reload};
 }
 
 export function Resource<T>({ state, children }: { state: ReturnType<typeof useResource<T>>; children: (data: T) => ReactNode }) {

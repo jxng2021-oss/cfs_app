@@ -8,8 +8,18 @@ import { authRoutes, type Services } from './auth.js';
 import { contentRoutes } from './content.js';
 import { ApiError, notFound } from './http.js';
 import { moduleRoutes } from './modules.js';
+import { createStorage } from './storage.js';
+import { fileRoutes } from './files.js';
+import { assessmentConfigRoutes } from './assessment-config.js';
+import { assignmentRoutes } from './assignment-routes.js';
+import { quizRoutes } from './quiz-routes.js';
+import { gradeRoutes } from './grade-routes.js';
+import { gradebookRoutes } from './gradebook.js';
+import { releaseRoutes } from './release-routes.js';
+import { analyticsRoutes } from './analytics.js';
+import { announcementRoutes } from './announcements.js';
 
-export function createApp(services: Services, webRoot = resolve('dist/web')) {
+export function createApp(services: Services, webRoot = resolve('dist/web'), storage = createStorage(services.config)) {
   const app = express();
   app.disable('x-powered-by');
   if (services.config.TRUST_PROXY) app.set('trust proxy', 1);
@@ -22,6 +32,10 @@ export function createApp(services: Services, webRoot = resolve('dist/web')) {
     const start = performance.now();
     res.locals.requestId = requestId;
     res.set('X-Request-Id', requestId);
+    const { INSTANCE_ID, AVAILABILITY_ZONE } = process.env;
+    if (INSTANCE_ID && AVAILABILITY_ZONE && /^i-[a-f0-9]+$/.test(INSTANCE_ID) && /^[a-z0-9-]+$/.test(AVAILABILITY_ZONE)) {
+      res.set('X-Served-By', INSTANCE_ID + ' ' + AVAILABILITY_ZONE);
+    }
     res.once('finish', () => {
       if (services.config.NODE_ENV === 'test') return;
       console.info(JSON.stringify({
@@ -50,7 +64,11 @@ export function createApp(services: Services, webRoot = resolve('dist/web')) {
 
   const api = Router();
   api.use(express.json({ limit: '1mb' }));
-  api.use(authRoutes(services), adminRoutes(services), moduleRoutes(services), contentRoutes(services));
+  api.use(
+    authRoutes(services), adminRoutes(services), moduleRoutes(services), contentRoutes(services), fileRoutes(services,storage),
+    assessmentConfigRoutes(services), assignmentRoutes(services), quizRoutes(services), gradeRoutes(services), gradebookRoutes(services),
+    releaseRoutes(services), analyticsRoutes(services), announcementRoutes(services),
+  );
   app.use('/api/v1', api);
   app.use('/api', notFound);
   app.use('/health', notFound);

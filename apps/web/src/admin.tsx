@@ -8,7 +8,7 @@ import { Link, useParams } from 'react-router-dom';
 import { BookOpen, CircleCheck, FileText, Grid2X2, Plus, UsersRound } from 'lucide-react';
 import { Card } from './components/ui/card.js';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog.js';
-import { get, list, mutate, type AdminModule, type AdminUser, type AuditEvent, type Enrolment } from './api.js';
+import { ApiError, get, list, mutate, type AdminModule, type AdminUser, type AuditEvent, type Enrolment } from './api.js';
 import { Badge, Empty, ErrorMessage, Heading, Pagination, Resource, SearchField, dateTime, field, submit, useAction, useConfirmation, useResource } from './ui.js';
 
 function AccountPicker({ role, label, initial }: { role: 'STUDENT' | 'LECTURER'; label: string; initial?: { id: string; displayName: string } }) {
@@ -128,6 +128,22 @@ export function AdminModules({ csrf }: { csrf: string }) {
     return results.map(result => result.pagination.total);
   }, 'module-metrics');
   function reload() { state.reload(); stats.reload(); }
+  function archive(module:AdminModule,confirmUnpublishedGrades=false){
+    void action.run(async()=>{
+      try {
+        await mutate('/admin/modules/'+module.id+'/archive','POST',{version:module.version,confirmUnpublishedGrades},csrf);
+        reload();
+      } catch(error){
+        if(error instanceof ApiError&&error.code==='UNPUBLISHED_GRADES_CONFIRMATION_REQUIRED'){
+          confirmation.ask({title:'Archive with unpublished grades?',label:'Archive with unpublished grades',destructive:true,
+            detail:(error.fields?.unpublishedCount??'Some')+' unpublished grades will remain hidden when the module is archived.',
+            run:()=>archive(module,true)});
+          return;
+        }
+        throw error;
+      }
+    });
+  }
   const selected = typeof mode === 'object' ? mode : null;
   return <>
     <Heading title="Modules" detail="Manage teaching modules, lecturer assignments and enrolments." action={<Button onClick={() => { action.clear(); setMode('new'); }}><Plus size={17} aria-hidden="true"/>New module</Button>} />
@@ -179,7 +195,7 @@ export function AdminModules({ csrf }: { csrf: string }) {
           })}>Activate</Button>}
           {module.status === 'ACTIVE' && <Button variant="outline" size="sm" disabled={action.pending} onClick={() => confirmation.ask({
             title: 'Archive ' + module.name + '?', label: 'Archive module', detail: 'The module will permanently become read-only.', destructive: true,
-            run: () => void action.run(async () => { await mutate('/admin/modules/' + module.id + '/archive', 'POST', { version: module.version, confirmUnpublishedGrades: false }, csrf); reload(); }),
+            run: () => archive(module),
           })}>Archive</Button>}
         </div></TableCell></TableRow>)}</TableBody>
       </Table></div>}

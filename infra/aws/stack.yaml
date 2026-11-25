@@ -1,0 +1,436 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CFS Learn lab deployment with an ALB, two availability zones, EC2 Auto Scaling, private PostgreSQL, and S3.
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Default: cfs-learn
+    AllowedPattern: '[a-z][a-z0-9-]{2,17}[a-z0-9]'
+  ClassSerial:
+    Type: Number
+    Default: 20
+    MinValue: 0
+    MaxValue: 255
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  InstanceProfile:
+    Type: String
+    Default: LabInstanceProfile
+    AllowedPattern: '[A-Za-z0-9_+=,.@-]+'
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.micro, t3.small]
+  DatabaseClass:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues: [db.t3.micro, db.t4g.micro]
+  PostgresEngineVersion:
+    Type: String
+    Default: ''
+    AllowedPattern: '([0-9]+(\.[0-9]+)*)?'
+  AppImage:
+    Type: String
+    Description: Linux amd64 GHCR image reference pinned to its SHA-256 digest.
+    AllowedPattern: 'ghcr\.io/[a-z0-9_./-]+@sha256:[a-f0-9]{64}'
+  AppSecretId:
+    Type: String
+    Description: Name or ARN of the application configuration in Secrets Manager.
+    AllowedPattern: '[A-Za-z0-9_+=,.@/:-]+'
+  RegistrySecretId:
+    Type: String
+    Default: ''
+    Description: Optional Secrets Manager secret containing GHCR username and token for a private image.
+    AllowedPattern: '[A-Za-z0-9_+=,.@/:-]*'
+  CertificateArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '(arn:[A-Za-z0-9_+=,.@/:-]+)?'
+  PublicHostname:
+    Type: String
+    Default: ''
+    AllowedPattern: '([a-zA-Z0-9][a-zA-Z0-9.-]*)?'
+  EnableWeb:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+  EnableMigrationHost:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+  CpuTarget:
+    Type: Number
+    Default: 50
+    AllowedValues: [30, 50]
+Rules:
+  CertificateNeedsHostname:
+    RuleCondition: !Not [!Equals [!Ref CertificateArn, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref PublicHostname, '']]
+        AssertDescription: Provide the hostname covered by the ACM certificate.
+Conditions:
+  UseTls: !Not [!Equals [!Ref CertificateArn, '']]
+  PinDatabaseVersion: !Not [!Equals [!Ref PostgresEngineVersion, '']]
+  WebOn: !Equals [!Ref EnableWeb, 'true']
+  MigrationOn: !Equals [!Ref EnableMigrationHost, 'true']
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Sub '10.${ClassSerial}.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-vpc'}]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  InternetAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+  PublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  PrivateRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetAttachment
+    Properties:
+      RouteTableId: !Ref PublicRoutes
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Sub '10.${ClassSerial}.1.0/24'
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-public-a'}]
+  PublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Sub '10.${ClassSerial}.2.0/24'
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-public-b'}]
+  WebA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Sub '10.${ClassSerial}.11.0/24'
+      MapPublicIpOnLaunch: true
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-web-a'}]
+  WebB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Sub '10.${ClassSerial}.12.0/24'
+      MapPublicIpOnLaunch: true
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-web-b'}]
+  DataA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Sub '10.${ClassSerial}.21.0/24'
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-db-a'}]
+  DataB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Sub '10.${ClassSerial}.22.0/24'
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-db-b'}]
+  RoutePublicA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PublicA, RouteTableId: !Ref PublicRoutes}
+  RoutePublicB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PublicB, RouteTableId: !Ref PublicRoutes}
+  RouteWebA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref WebA, RouteTableId: !Ref PublicRoutes}
+  RouteWebB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref WebB, RouteTableId: !Ref PublicRoutes}
+  RouteDataA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref DataA, RouteTableId: !Ref PrivateRoutes}
+  RouteDataB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref DataB, RouteTableId: !Ref PrivateRoutes}
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      RouteTableIds: [!Ref PublicRoutes, !Ref PrivateRoutes]
+  AlbGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public access to the load balancer
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
+        - !If [UseTls, {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}, !Ref 'AWS::NoValue']
+  WebGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Application traffic from the ALB only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 3000, ToPort: 3000, SourceSecurityGroupId: !Ref AlbGroup}
+  DatabaseGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database traffic from the web and migration hosts
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref WebGroup}
+  Uploads:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+  UploadsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Uploads
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt Uploads.Arn, !Sub '${Uploads.Arn}/*']
+            Condition:
+              Bool: {'aws:SecureTransport': 'false'}
+  DatabaseSubnets:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Two private subnets for CFS Learn PostgreSQL
+      SubnetIds: [!Ref DataA, !Ref DataB]
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${ResourcePrefix}-db'
+      AllocatedStorage: 20
+      StorageType: gp3
+      StorageEncrypted: true
+      DBInstanceClass: !Ref DatabaseClass
+      DBName: minilms
+      Engine: postgres
+      EngineVersion: !If [PinDatabaseVersion, !Ref PostgresEngineVersion, !Ref 'AWS::NoValue']
+      MasterUsername: lms_admin
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref DatabaseSubnets
+      VPCSecurityGroups: [!Ref DatabaseGroup]
+      BackupRetentionPeriod: 1
+      PubliclyAccessible: false
+      MultiAZ: false
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn:
+      - InternetRoute
+      - RoutePublicA
+      - RoutePublicB
+    Properties:
+      Name: !Sub '${ResourcePrefix}-alb'
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      Subnets: [!Ref PublicA, !Ref PublicB]
+      SecurityGroups: [!Ref AlbGroup]
+      LoadBalancerAttributes:
+        - {Key: idle_timeout.timeout_seconds, Value: '60'}
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${ResourcePrefix}-tg'
+      VpcId: !Ref Vpc
+      TargetType: instance
+      Protocol: HTTP
+      Port: 3000
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 15
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher: {HttpCode: '200'}
+      TargetGroupAttributes:
+        - {Key: deregistration_delay.timeout_seconds, Value: '30'}
+        - {Key: stickiness.enabled, Value: 'false'}
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - !If
+          - UseTls
+          - Type: redirect
+            RedirectConfig: {Protocol: HTTPS, Port: '443', StatusCode: HTTP_301}
+          - {Type: forward, TargetGroupArn: !Ref TargetGroup}
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: UseTls
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTPS
+      Port: 443
+      Certificates: [{CertificateArn: !Ref CertificateArn}]
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      DefaultActions: [{Type: forward, TargetGroupArn: !Ref TargetGroup}]
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/cfs-learn/${ResourcePrefix}'
+      RetentionInDays: 14
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${ResourcePrefix}-lt'
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile: {Name: !Ref InstanceProfile}
+        MetadataOptions: {HttpTokens: required, HttpEndpoint: enabled, HttpPutResponseHopLimit: 1}
+        SecurityGroupIds: [!Ref WebGroup]
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: {DeleteOnTermination: true, Encrypted: true, VolumeSize: 16, VolumeType: gp3}
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              set -euo pipefail
+              dnf -y install docker jq
+              systemctl enable --now docker
+              systemctl enable --now amazon-ssm-agent || true
+              install -d -m 0750 /etc/cfs-learn
+              curl --retry 4 --fail --silent --show-error https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /etc/cfs-learn/rds-ca.pem
+              chmod 0444 /etc/cfs-learn/rds-ca.pem
+              token=$(curl --fail --silent --show-error -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
+              instance_id=$(curl --fail --silent --show-error -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/instance-id)
+              zone=$(curl --fail --silent --show-error -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+              cat > /etc/cfs-learn/runtime.env <<ENV
+              NODE_ENV=production
+              PORT=3000
+              APP_ORIGIN=${Origin}
+              COOKIE_SECURE=${SecureCookie}
+              TRUST_PROXY=true
+              AWS_REGION=${AWS::Region}
+              SECRET_ID=${AppSecretId}
+              STORAGE_DRIVER=s3
+              S3_BUCKET=${Uploads}
+              INSTANCE_ID=$instance_id
+              AVAILABILITY_ZONE=$zone
+              ENV
+              if [[ -n '${RegistrySecretId}' ]]; then
+                credentials=$(aws secretsmanager get-secret-value --region '${AWS::Region}' --secret-id '${RegistrySecretId}' --query SecretString --output text)
+                username=$(jq -er '.username' <<< "$credentials")
+                jq -er '.token' <<< "$credentials" | docker login ghcr.io --username "$username" --password-stdin
+                unset credentials username
+              fi
+              docker pull '${AppImage}'
+              if [[ -n '${RegistrySecretId}' ]]; then docker logout ghcr.io; fi
+              cat > /etc/systemd/system/cfs-learn.service <<UNIT
+              [Unit]
+              Description=CFS Learn application container
+              After=docker.service network-online.target
+              Requires=docker.service
+              [Service]
+              Restart=on-failure
+              RestartSec=12
+              TimeoutStopSec=35
+              ExecStartPre=-/usr/bin/docker rm -f cfs-learn
+              ExecStart=/usr/bin/docker run --rm --name cfs-learn --network host --env-file /etc/cfs-learn/runtime.env --mount type=bind,src=/etc/cfs-learn/rds-ca.pem,dst=/app/certs/rds-ca.pem,readonly --log-driver awslogs --log-opt awslogs-region=${AWS::Region} --log-opt awslogs-group=${LogGroup} --log-opt awslogs-stream=$instance_id ${AppImage}
+              ExecStop=/usr/bin/docker stop --time 30 cfs-learn
+              [Install]
+              WantedBy=multi-user.target
+              UNIT
+              systemctl daemon-reload
+              systemctl enable --now cfs-learn
+            - Origin: !If [UseTls, !Sub 'https://${PublicHostname}', !Sub 'http://${LoadBalancer.DNSName}']
+              SecureCookie: !If [UseTls, 'true', 'false']
+  WebFleet:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+      - HttpListener
+      - RouteWebA
+      - RouteWebB
+    Properties:
+      AutoScalingGroupName: !Sub '${ResourcePrefix}-asg'
+      MinSize: !If [WebOn, '2', '0']
+      DesiredCapacity: !If [WebOn, '2', '0']
+      MaxSize: !If [WebOn, '4', '0']
+      DefaultInstanceWarmup: 120
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 180
+      VPCZoneIdentifier: [!Ref WebA, !Ref WebB]
+      LaunchTemplate: {LaunchTemplateId: !Ref LaunchTemplate, Version: !GetAtt LaunchTemplate.LatestVersionNumber}
+      TargetGroupARNs: [!Ref TargetGroup]
+      Tags:
+        - {Key: Name, Value: !Sub '${ResourcePrefix}-web', PropagateAtLaunch: true}
+  TargetTracking:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Condition: WebOn
+    Properties:
+      AutoScalingGroupName: !Ref WebFleet
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification: {PredefinedMetricType: ASGAverageCPUUtilization}
+        TargetValue: !Ref CpuTarget
+  MigrationHost:
+    Type: AWS::EC2::Instance
+    Condition: MigrationOn
+    DependsOn:
+      - RouteWebA
+      - InternetRoute
+      - Database
+    Properties:
+      SubnetId: !Ref WebA
+      LaunchTemplate: {LaunchTemplateId: !Ref LaunchTemplate, Version: !GetAtt LaunchTemplate.LatestVersionNumber}
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-migration'}]
+Outputs:
+  ApplicationOrigin:
+    Value: !If [UseTls, !Sub 'https://${PublicHostname}', !Sub 'http://${LoadBalancer.DNSName}']
+  LoadBalancerDNS:
+    Value: !GetAtt LoadBalancer.DNSName
+  DatabaseHost:
+    Value: !GetAtt Database.Endpoint.Address
+  DatabaseMasterSecret:
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+  UploadBucket:
+    Value: !Ref Uploads
+  MigrationInstanceId:
+    Condition: MigrationOn
+    Value: !Ref MigrationHost
+  AutoScalingGroup:
+    Value: !Ref WebFleet
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+  ApplicationLogGroup:
+    Value: !Ref LogGroup

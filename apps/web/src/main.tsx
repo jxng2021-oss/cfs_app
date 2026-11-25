@@ -8,6 +8,8 @@ import { ApiError, get, mutate, type Session } from './api.js';
 import { AdminAudit, AdminEnrolments, AdminModules, AdminUsers } from './admin.js';
 import { ModuleDetail, ModuleList, ModuleRoster } from './modules.js';
 import { MaterialDetail, TopicDetail, TopicList } from './learning.js';
+import { AssessmentDetail, AssessmentEdit, AssessmentList, QuizAttempt } from './assessments.js';
+import { Analytics, AnalyticsSettings, Announcements, Gradebook, Marking } from './academic.js';
 import { ErrorMessage, Heading, Resource, field, submit, useAction, useResource } from './ui.js';
 import './theme.css';
 import './styles.css';
@@ -103,7 +105,10 @@ function Layout({ session, children, signOut }: { session: Session; children: Re
       {moduleId && <nav className="course-nav" aria-label="Module navigation">
         <NavLink end to={modulePath}>Overview</NavLink>
         <NavLink to={modulePath + '/content'}>Content</NavLink>
-        {session.user.role === 'LECTURER' && <NavLink to={modulePath + '/roster'}>Roster</NavLink>}
+        <NavLink to={modulePath + '/assessments'}>Assessments</NavLink>
+        <NavLink to={modulePath + '/gradebook'}>Gradebook</NavLink>
+        <NavLink to={modulePath + '/announcements'}>Announcements</NavLink>
+        {session.user.role === 'LECTURER' && <><NavLink to={modulePath + '/roster'}>Roster</NavLink><NavLink to={modulePath + '/analytics'}>Analytics</NavLink></>}
       </nav>}
       <main id="main-content" className="content" tabIndex={-1}><ErrorMessage message={action.error} />{children}</main>
     </div>
@@ -155,7 +160,22 @@ function App() {
         <Route path="/modules/:moduleId/content" element={<TopicList session={userSession} />} />
         <Route path="/modules/:moduleId/content/:topicId" element={<TopicDetail session={userSession} />} />
         <Route path="/modules/:moduleId/content/:topicId/materials/:materialId" element={<MaterialDetail session={userSession} />} />
-        {userSession.user.role === 'LECTURER' && <Route path="/modules/:moduleId/roster" element={<ModuleRoster />} />}
+        <Route path="/modules/:moduleId/assessments" element={<AssessmentList session={userSession}/>}/>
+        <Route path="/modules/:moduleId/gradebook" element={<Gradebook session={userSession}/>}/>
+        <Route path="/modules/:moduleId/announcements" element={<Announcements session={userSession}/>}/>
+        {userSession.user.role === 'LECTURER' ? <>
+          <Route path="/modules/:moduleId/roster" element={<ModuleRoster />} />
+          <Route path="/modules/:moduleId/assessments/new" element={<AssessmentEdit session={userSession} fresh/>}/>
+          <Route path="/modules/:moduleId/assessments/:assessmentId/edit" element={<AssessmentEdit session={userSession}/>}/>
+          <Route path="/modules/:moduleId/assessments/:assessmentId/marking" element={<Marking session={userSession}/>}/>
+          <Route path="/modules/:moduleId/gradebook/:studentId" element={<Gradebook session={userSession}/>}/>
+          <Route path="/modules/:moduleId/analytics" element={<Analytics/>}/>
+          <Route path="/modules/:moduleId/analytics/settings" element={<AnalyticsSettings session={userSession}/>}/>
+        </> : <>
+          <Route path="/modules/:moduleId/assessments/:assessmentId" element={<AssessmentDetail session={userSession}/>}/>
+          <Route path="/modules/:moduleId/assessments/:assessmentId/attempt/:attemptId" element={<QuizAttempt session={userSession}/>}/>
+          <Route path="/modules/:moduleId/assessments/:assessmentId/review/:attemptId" element={<QuizAttempt session={userSession} review/>}/>
+        </>}
       </>}
       <Route path="*" element={<Navigate to={fallback} replace />} />
     </Routes></Layout>} />

@@ -2,9 +2,13 @@ import { Router, type Request, type Response } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
 import { requireRole, viewer, type Services } from './auth.js';
-import { audit, transaction, type Db } from './db.js';
+import { audit, type Db } from './db.js';
 import { ApiError, data, empty, id, invalid, notFound, read, safeText, version } from './http.js';
-import { editable, lockActor, matchVersion, scopedModule, type ModuleRow } from './modules.js';
+import { matchVersion, type ModuleRow } from './modules.js';
+import { withLearning } from './learning-access.js';
+import { assertReleaseOrder, denyLocked, releaseRequirements, topicLocked } from './release-store.js';
+import { attachFile, discardMaterialFile, fileDto, type FileRow } from './files.js';
+import { studentGradebook } from './gradebook.js';
 
 type Topic = {
   id: string; module_id: string; title: string; description: string; position: number;
@@ -12,23 +16,23 @@ type Topic = {
   required_count?: number; completed_count?: number;
 };
 type Material = {
-  id: string; topic_id: string; title: string; summary: string; type: 'TEXT' | 'LINK'; position: number;
+  id: string; topic_id: string; title: string; summary: string; type: 'TEXT' | 'LINK' | 'FILE'; position: number;
   status: 'DRAFT' | 'PUBLISHED'; is_required: boolean; version: number; published_at: Date | null;
-  text_body: string | null; external_url: string | null; completed_at?: Date | null;
+  text_body: string | null; external_url: string | null; file_id: string | null; completed_at?: Date | null;
 };
 
 const topicFields = { title: safeText(120), description: z.string().trim().max(2000).optional() };
 const topicCreate = z.strictObject(topicFields);
 const topicEdit = z.strictObject({ ...topicFields, title: topicFields.title.optional(), version });
 const contentFields = {
-  title: safeText(120), summary: z.string().trim().max(500), type: z.enum(['TEXT', 'LINK']), required: z.boolean(),
+  title: safeText(120), summary: z.string().trim().max(500), type: z.enum(['TEXT', 'LINK','FILE']), required: z.boolean(),
   textBody: safeText(20000), externalUrl: z.string().trim().max(2048).startsWith('https://').pipe(z.url({ protocol: /^https$/ })).refine(value => {
     const url = new URL(value);
     return !url.username && !url.password;
-  }, 'Do not include credentials in the URL'),
+  }, 'Do not include credentials in the URL'), fileId: z.uuid(),
 };
 const materialFields = z.strictObject({ ...contentFields, summary: contentFields.summary.optional(), required: contentFields.required.optional(),
-  textBody: contentFields.textBody.optional(), externalUrl: contentFields.externalUrl.optional() });
+  textBody: contentFields.textBody.optional(), externalUrl: contentFields.externalUrl.optional(), fileId: contentFields.fileId.optional() });
 const materialEdit = materialFields.partial().extend({ version });
 const versionBody = z.strictObject({ version });
 
@@ -36,11 +40,14 @@ export function readingProgress(completed: number, total: number) {
   return { completed, total, percent: total === 0 ? null : Math.floor((200 * completed + total) / (2 * total)) };
 }
 
-function topicDto(row: Topic, learner: boolean) {
+type Requirements = Awaited<ReturnType<typeof releaseRequirements>>;
+
+function topicDto(row: Topic, learner: boolean, requirements?: Requirements) {
   const details = { id: row.id, title: row.title, description: row.description, position: row.position, status: row.status };
   if (!learner) return { ...details, version: row.version, publishedAt: row.published_at };
   const progress = readingProgress(row.completed_count ?? 0, row.required_count ?? 0);
-  return { ...details, progress, learningState: progress.percent === 100 ? 'COMPLETE' : 'AVAILABLE', requirements: [] };
+  return { ...details, progress, learningState: requirements && topicLocked(requirements,row.id) ? 'LOCKED'
+    : progress.total > 0 && progress.completed === progress.total ? 'COMPLETE' : 'AVAILABLE', requirements: requirements?.get(row.id) ?? [] };
 }
 
 function materialDto(row: Material, learner: boolean, detail = false) {
@@ -76,9 +83,10 @@ async function getMaterial(db: Db, topicId: string, materialId: string, studentI
 function draft(topic: Topic) {
   if (topic.status !== 'DRAFT') throw new ApiError(409, 'INVALID_STATE', 'Materials in a published topic are read-only.');
 }
-function payload(type: Material['type'], text: string | null | undefined, link: string | null | undefined) {
-  if (type === 'TEXT' && text && !link) return [text, null] as const;
-  if (type === 'LINK' && link && !text) return [null, link] as const;
+function payload(type: Material['type'], text?: string | null, link?: string | null, fileId?: string | null) {
+  if (type === 'TEXT' && text && !link && !fileId) return [text, null, null] as const;
+  if (type === 'LINK' && link && !text && !fileId) return [null, link, null] as const;
+  if (type === 'FILE' && fileId && !text && !link) return [null, null, fileId] as const;
   return invalid('Provide exactly the content required by the selected material type.');
 }
 function verifyOrder(requested: string[], existing: string[]) {
@@ -88,7 +96,7 @@ function verifyOrder(requested: string[], existing: string[]) {
 }
 
 export function contentRoutes(services: Services) {
-  const { pool, clock } = services;
+  const { clock } = services;
   const router = Router();
   const lecturer = requireRole('LECTURER');
   const studentOnly = requireRole('STUDENT');
@@ -98,18 +106,13 @@ export function contentRoutes(services: Services) {
   const material = materials + '/:materialId';
 
   async function access<T>(req: Request, res: Response, write: boolean, run: (db: pg.PoolClient, module: ModuleRow, studentId: string | null) => Promise<T>) {
-    const { user } = viewer(res);
-    return transaction(pool, async db => {
-      if (write) await lockActor(db, res, services);
-      const module = await scopedModule(db, id(req, 'moduleId'), user.id, user.role, true);
-      if (write) editable(module);
-      return run(db, module, user.role === 'STUDENT' ? user.id : null);
-    });
+    return withLearning(services, req, res, write, ({ db, module, studentId }) => run(db, module, studentId));
   }
 
   router.get(topics, async (req, res) => data(res, await access(req, res, false, async (db, module, studentId) => {
     const { rows } = await db.query<Topic>(topicSelect + " WHERE t.module_id = $1 AND ($2::uuid IS NULL OR t.status = 'PUBLISHED') ORDER BY t.position, t.id", [module.id, studentId]);
-    return rows.map(row => topicDto(row, Boolean(studentId)));
+    const requirements = studentId ? await releaseRequirements(db,module.id,studentId) : undefined;
+    return rows.map(row => topicDto(row, Boolean(studentId), requirements));
   })));
 
   router.post(topics, lecturer, async (req, res) => {
@@ -127,8 +130,11 @@ export function contentRoutes(services: Services) {
 
   router.get(topic, async (req, res) => data(res, await access(req, res, false, async (db, module, studentId) => {
     const row = await getTopic(db, module.id, id(req, 'topicId'), studentId);
+    const requirements = studentId ? await releaseRequirements(db,module.id,studentId) : undefined;
+    if (requirements && topicLocked(requirements,row.id)) return { ...topicDto(row,true,requirements), materials: [], assessments: [] };
     const { rows } = await db.query<Material>(materialQuery(' ORDER BY m.position, m.id'), [row.id, studentId]);
-    return { ...topicDto(row, Boolean(studentId)), materials: rows.map(value => materialDto(value, Boolean(studentId))) };
+    const assessments = await db.query('SELECT id,title,type,due_at "dueAt",status FROM assessments WHERE topic_id=$1 AND ($2::uuid IS NULL OR status=\'PUBLISHED\') ORDER BY due_at,title,id', [row.id,studentId]);
+    return { ...topicDto(row, Boolean(studentId), requirements), materials: rows.map(value => materialDto(value, Boolean(studentId))), assessments: assessments.rows };
   })));
 
   router.patch(topic, lecturer, async (req, res) => {
@@ -152,6 +158,7 @@ export function contentRoutes(services: Services) {
       matchVersion(input.version, row.version);
       if (row.status !== 'DRAFT') throw new ApiError(409, 'INVALID_STATE', 'This topic is already published.');
       if (!row.required_count) invalid('Publish at least one required material before publishing the topic.');
+      await assertReleaseOrder(db,module.id);
       const publishedAt = await clock(db);
       const result = await db.query<Topic>("UPDATE topics SET status = 'PUBLISHED', published_at = $2, updated_at = $2, version = version + 1 WHERE id = $1 RETURNING *", [row.id, publishedAt]);
       await audit(db, viewer(res).user.id, 'TOPIC_PUBLISHED', 'TOPIC', row.id, module.id);
@@ -171,6 +178,7 @@ export function contentRoutes(services: Services) {
       }
       await db.query('SET CONSTRAINTS topics_module_id_position_key DEFERRED');
       await db.query('UPDATE topics t SET position = ordered.position FROM unnest($1::uuid[]) WITH ORDINALITY ordered(id, position) WHERE t.id = ordered.id', [input.topicIds]);
+      await assertReleaseOrder(db,module.id);
       await db.query('UPDATE modules SET version = version + 1, updated_at = clock_timestamp() WHERE id = $1', [module.id]);
       return { topicIds: input.topicIds, moduleVersion: module.version + 1 };
     }));
@@ -180,7 +188,10 @@ export function contentRoutes(services: Services) {
     await access(req, res, true, async (db, module) => {
       const row = await getTopic(db, module.id, id(req, 'topicId'), null);
       if (row.status !== 'DRAFT') throw new ApiError(409, 'INVALID_STATE', 'Published topics cannot be deleted.');
+      if ((await db.query('SELECT 1 FROM assessments WHERE topic_id=$1 LIMIT 1', [row.id])).rowCount) throw new ApiError(409, 'DEPENDENCY_EXISTS', 'Move the linked assessment before deleting the topic.');
+      const files = (await db.query<{ file_id: string }>('SELECT file_id FROM materials WHERE topic_id=$1 AND file_id IS NOT NULL', [row.id])).rows;
       await db.query('DELETE FROM topics WHERE id = $1', [row.id]);
+      for (const file of files) await discardMaterialFile(db,file.file_id);
       await db.query('SET CONSTRAINTS topics_module_id_position_key DEFERRED');
       await db.query('UPDATE topics SET position = position - 1 WHERE module_id = $1 AND position > $2', [module.id, row.position]);
       await db.query('UPDATE modules SET version = version + 1, updated_at = clock_timestamp() WHERE id = $1', [module.id]);
@@ -190,19 +201,23 @@ export function contentRoutes(services: Services) {
 
   router.get(material, async (req, res) => data(res, await access(req, res, false, async (db, module, studentId) => {
     const row = await getTopic(db, module.id, id(req, 'topicId'), studentId);
-    return materialDto(await getMaterial(db, row.id, id(req, 'materialId'), studentId), Boolean(studentId), true);
+    if (studentId && topicLocked(await releaseRequirements(db,module.id,studentId),row.id)) denyLocked();
+    const item = await getMaterial(db, row.id, id(req, 'materialId'), studentId);
+    const file = item.file_id ? (await db.query<FileRow>("SELECT * FROM files WHERE id=$1 AND status='ATTACHED'", [item.file_id])).rows[0] : undefined;
+    return { ...materialDto(item, Boolean(studentId), true), ...(file ? { file: fileDto(file) } : {}) };
   })));
 
   router.post(materials, lecturer, async (req, res) => {
     const input = read(materialFields, req.body);
-    const [text, link] = payload(input.type, input.textBody, input.externalUrl);
+    const [text, link, fileId] = payload(input.type, input.textBody, input.externalUrl, input.fileId);
     data(res, await access(req, res, true, async (db, module) => {
       const row = await getTopic(db, module.id, id(req, 'topicId'), null);
       draft(row);
+      if (fileId) await attachFile(db,fileId,viewer(res).user.id,'MATERIAL',await clock(db));
       const result = await db.query<Material>(
-        `INSERT INTO materials (topic_id, title, summary, type, text_body, external_url, is_required, position)
-         SELECT $1, $2, $3, $4, $5, $6, $7, coalesce(max(position), 0) + 1 FROM materials WHERE topic_id = $1 RETURNING *`,
-        [row.id, input.title, input.summary ?? '', input.type, text, link, input.required ?? true],
+        `INSERT INTO materials (topic_id, title, summary, type, text_body, external_url, is_required, file_id, position)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, coalesce(max(position), 0) + 1 FROM materials WHERE topic_id = $1 RETURNING *`,
+        [row.id, input.title, input.summary ?? '', input.type, text, link, input.required ?? true,fileId],
       );
       await db.query('UPDATE topics SET version = version + 1, updated_at = clock_timestamp() WHERE id = $1', [row.id]);
       return materialDto(result.rows[0], false, true);
@@ -219,12 +234,15 @@ export function contentRoutes(services: Services) {
       matchVersion(input.version, item.version);
       if (item.status === 'PUBLISHED') throw new ApiError(409, 'INVALID_STATE', 'Revert this material to draft before editing.');
       const type = input.type ?? item.type;
-      const [text, link] = payload(type, input.textBody ?? (type === 'TEXT' ? item.text_body : null), input.externalUrl ?? (type === 'LINK' ? item.external_url : null));
+      const [text, link, fileId] = payload(type, input.textBody ?? (type === 'TEXT' ? item.text_body : null),
+        input.externalUrl ?? (type === 'LINK' ? item.external_url : null), input.fileId ?? (type === 'FILE' ? item.file_id : null));
+      if (fileId && fileId !== item.file_id) await attachFile(db,fileId,viewer(res).user.id,'MATERIAL',await clock(db));
       const result = await db.query<Material>(
         `UPDATE materials SET title = coalesce($2, title), summary = coalesce($3, summary), type = $4, text_body = $5, external_url = $6,
-         is_required = coalesce($7, is_required), version = version + 1, updated_at = clock_timestamp() WHERE id = $1 RETURNING *`,
-        [item.id, input.title, input.summary, type, text, link, input.required],
+         is_required = coalesce($7, is_required), file_id=$8, version = version + 1, updated_at = clock_timestamp() WHERE id = $1 RETURNING *`,
+        [item.id, input.title, input.summary, type, text, link, input.required,fileId],
       );
+      if (fileId !== item.file_id) await discardMaterialFile(db,item.file_id);
       return materialDto(result.rows[0], false, true);
     }));
   });
@@ -239,6 +257,7 @@ export function contentRoutes(services: Services) {
         matchVersion(input.version, item.version);
         const status = action === 'publish' ? 'PUBLISHED' : 'DRAFT';
         if (item.status === status) throw new ApiError(409, 'INVALID_STATE', 'The material already has this status.');
+        if (item.type === 'FILE' && status === 'PUBLISHED' && !(await db.query("SELECT 1 FROM files WHERE id=$1 AND status='ATTACHED'", [item.file_id])).rowCount) invalid('Attach a valid file first.');
         const now = await clock(db);
         const result = await db.query<Material>(
           'UPDATE materials SET status = $2, published_at = $3, updated_at = $4, version = version + 1 WHERE id = $1 RETURNING *',
@@ -271,6 +290,7 @@ export function contentRoutes(services: Services) {
       draft(row);
       const item = await getMaterial(db, row.id, id(req, 'materialId'), null);
       await db.query('DELETE FROM materials WHERE id = $1', [item.id]);
+      await discardMaterialFile(db,item.file_id);
       await db.query('SET CONSTRAINTS materials_topic_id_position_key DEFERRED');
       await db.query('UPDATE materials SET position = position - 1 WHERE topic_id = $1 AND position > $2', [row.id, item.position]);
       await db.query('UPDATE topics SET version = version + 1, updated_at = clock_timestamp() WHERE id = $1', [row.id]);
@@ -282,6 +302,7 @@ export function contentRoutes(services: Services) {
     read(empty, req.body ?? {});
     data(res, await access(req, res, true, async (db, module, studentId) => {
       const row = await getTopic(db, module.id, id(req, 'topicId'), studentId);
+      if (studentId && topicLocked(await releaseRequirements(db,module.id,studentId),row.id)) denyLocked();
       const item = await getMaterial(db, row.id, id(req, 'materialId'), studentId);
       if (!item.is_required) throw new ApiError(409, 'INVALID_STATE', 'Only required materials count toward completion.');
       const now = await clock(db);
@@ -291,11 +312,15 @@ export function contentRoutes(services: Services) {
     }));
   });
 
-  router.get('/modules/:moduleId/progress/me', studentOnly, async (req, res) => data(res, await access(req, res, false, async (db, module, studentId) => {
+  router.get('/modules/:moduleId/progress/me', studentOnly, async (req, res) => data(res, await withLearning(services,req,res,false,async scope => {
+    const {db,module,studentId}=scope;
     const { rows } = await db.query<Topic>(topicSelect + " WHERE t.module_id = $1 AND t.status = 'PUBLISHED' ORDER BY t.position, t.id", [module.id, studentId]);
     const completed = rows.reduce((sum, row) => sum + (row.completed_count ?? 0), 0);
     const total = rows.reduce((sum, row) => sum + (row.required_count ?? 0), 0);
-    return { overall: readingProgress(completed, total), topics: rows.map(row => topicDto(row, true)) };
+    const rules = await releaseRequirements(db,module.id,studentId!);
+    const {upcoming,assessments: _rows,...grades}=await studentGradebook(scope);
+    void _rows;
+    return { overall: readingProgress(completed, total), topics: rows.map(row => topicDto(row, true,rules)),upcomingDeadlines:upcoming,gradeSummary:grades };
   })));
   return router;
 }

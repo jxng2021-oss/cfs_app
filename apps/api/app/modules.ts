@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireRole, viewer, type Role, type Services } from './auth.js';
 import { audit, transaction, type Db } from './db.js';
 import { ApiError, data, empty, id, invalid, notFound, pageFields, paged, pgError, read, safeText, version } from './http.js';
+import { reconcileExpired } from './quiz-engine.js';
 
 const statuses = ['DRAFT', 'ACTIVE', 'ARCHIVED'] as const;
 type ModuleStatus = typeof statuses[number];
@@ -183,12 +184,23 @@ export function moduleRoutes({ pool, clock }: Services) {
       const current = await lockModule(db, moduleId);
       matchVersion(input.version, current.version);
       if (current.status !== 'ACTIVE') throw new ApiError(409, 'INVALID_STATE', 'Only an active module can be archived.');
-      // Assessment and grade blockers must join this transaction when those records are introduced.
       const now = await clock(db);
+      await reconcileExpired(db,moduleId,now);
+      const live = await db.query("SELECT 1 FROM quiz_attempts qa JOIN assessments a ON a.id=qa.assessment_id WHERE a.module_id=$1 AND qa.status='IN_PROGRESS' LIMIT 1", [moduleId]);
+      if (live.rowCount) return new ApiError(409,'ATTEMPT_IN_PROGRESS','Wait for in-progress quiz attempts before archiving.');
+      const future = await db.query("SELECT 1 FROM assessments WHERE module_id=$1 AND status='PUBLISHED' AND coalesce(close_at,due_at)>$2 LIMIT 1", [moduleId,now]);
+      if (future.rowCount) return new ApiError(409,'INVALID_STATE','Wait for published assessments to close before archiving.');
+      const outstanding = (await db.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM grades g JOIN assessments a ON a.id=g.assessment_id LEFT JOIN grade_revisions r ON r.id=g.published_revision_id
+         WHERE a.module_id=$1 AND (r.id IS NULL OR (g.points,g.feedback,g.attempt_id,g.submission_id) IS DISTINCT FROM (r.points,r.feedback,r.attempt_id,r.submission_id))`,
+        [moduleId],
+      )).rows[0].count;
+      if (outstanding && !input.confirmUnpublishedGrades) return new ApiError(409,'UNPUBLISHED_GRADES_CONFIRMATION_REQUIRED','Unpublished grades will remain hidden. Confirm to archive.',{unpublishedCount:String(outstanding)});
       await db.query("UPDATE modules SET status = 'ARCHIVED', archived_at = $2, updated_at = $2, version = version + 1 WHERE id = $1", [moduleId, now]);
       await audit(db, viewer(res).user.id, 'MODULE_ARCHIVED', 'MODULE', moduleId, moduleId, { status: 'ARCHIVED' });
       return adminDetail(db, moduleId);
     });
+    if (archived instanceof ApiError) throw archived;
     data(res, archived);
   });
 
@@ -227,6 +239,11 @@ export function moduleRoutes({ pool, clock }: Services) {
         if (!current) notFound();
         if (current.status === target) throw new ApiError(409, 'INVALID_STATE', 'The enrolment already has this status.');
         const withdrawnAt = target === 'WITHDRAWN' ? await clock(db) : null;
+        if (withdrawnAt) {
+          await reconcileExpired(db,moduleId,withdrawnAt,studentId);
+          const live = await db.query("SELECT 1 FROM quiz_attempts qa JOIN assessments a ON a.id=qa.assessment_id WHERE a.module_id=$1 AND qa.student_id=$2 AND qa.status='IN_PROGRESS' LIMIT 1", [moduleId,studentId]);
+          if (live.rowCount) return new ApiError(409,'ATTEMPT_IN_PROGRESS','The student has an in-progress quiz attempt.');
+        }
         const updated = (await db.query<Enrolment>(
           'UPDATE enrolments SET status = $3, withdrawn_at = $4 WHERE module_id = $1 AND student_id = $2 RETURNING *',
           [moduleId, studentId, target, withdrawnAt],
@@ -234,6 +251,7 @@ export function moduleRoutes({ pool, clock }: Services) {
         await audit(db, viewer(res).user.id, target === 'WITHDRAWN' ? 'ENROLMENT_WITHDRAWN' : 'ENROLMENT_REACTIVATED', 'ENROLMENT', studentId, moduleId, { status: target });
         return enrolmentDto({ ...updated, display_name: student.display_name });
       });
+      if (result instanceof ApiError) throw result;
       data(res, result);
     });
   }

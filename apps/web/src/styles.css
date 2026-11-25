@@ -176,6 +176,9 @@ td small, th small { display: block; margin-top: .24rem; font-weight: 430; }
 .module-card p { color: var(--muted); margin: 0; font-size: .83rem; }
 .module-card-foot { padding: .6rem .95rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .78rem; }
 .module-card-foot svg { color: var(--accent-dark); flex: none; }
+.module-card-section + .module-card-section { margin-top: 1.3rem; }
+.module-card-progress { padding-top: .65rem; }
+.module-card-progress > small { display: block; margin-top: .32rem; }
 .module-code { color: #263f62; font-weight: 700; letter-spacing: .03em; font-size: .81rem; }
 .module-detail { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(235px, 1fr); gap: 1rem; align-items: start; }
 [data-slot="card"].panel { display: block; }
@@ -198,6 +201,36 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 7px; }
 .plain-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .checkbox { display: flex; align-items: center; gap: .5rem; }
 .checkbox input { margin: 0; width: 18px; min-height: 18px; accent-color: var(--accent); }
+.timing { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: .4rem 1rem; color: var(--muted); }
+.timing dd { margin: 0; color: var(--foreground); }
+.file-types { display: flex; flex-wrap: wrap; gap: .75rem 1.15rem; }
+.receipt-list, .reason-list { list-style: none; margin: .8rem 0 0; padding: 0; }
+.receipt-list li { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: .6rem; padding: .68rem 0; border-top: 1px solid var(--line); }
+.receipt-list small, .released-grade small { display: block; margin-top: .25rem; }
+.receipt-list p { margin: .22rem 0; }
+.released-grade p { margin: .35rem 0; }
+.staged-receipt, .quiz-nav, .quiz-submit, .subheading { margin-top: 1rem; }
+.quiz-timer { display: flex !important; flex-direction: row; align-items: center; gap: .75rem; }
+.quiz-timer strong { font-size: 1.25rem; color: var(--accent); font-variant-numeric: tabular-nums; }
+.quiz-workbench { display: grid; grid-template-columns: minmax(0,2.5fr) minmax(170px,1fr); align-items: start; gap: .95rem; }
+.quiz-options { display: grid; gap: .6rem; margin: .85rem 0 .65rem; padding: 0; border: 0; }
+.quiz-option { display: flex; align-items: center; gap: .65rem; border: 1px solid var(--line); border-radius: var(--radius); padding: .65rem; }
+.quiz-option.correct { background: #eaf7ef; border-color: #ccebd8; }
+.quiz-option input, .quiz-editor-option input[type="radio"] { flex: none; margin: 0; width: 17px; min-height: 17px; accent-color: var(--accent); }
+.quiz-editor-option { display: flex; flex-wrap: wrap; gap: .45rem; align-items: end; }
+.quiz-editor-option .checkbox { align-self: center; padding-top: 1rem; }
+.quiz-option-input { flex: 1 1 145px; }
+.question-grid { display: flex; flex-wrap: wrap; gap: .4rem; }
+.reason-list { margin: 0; max-width: 20rem; white-space: normal; }
+.reason-list li { margin: .3rem 0; }
+.reason-list a { display: flex; margin: .24rem 0; }
+.distribution { display: grid; gap: .45rem; margin: .7rem 0 0; }
+.distribution div { display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: .55rem; }
+.distribution dd { display: flex; align-items: center; gap: .55rem; margin: 0; }
+.distribution dd span { min-width: 1.6rem; text-align: right; font-variant-numeric: tabular-nums; }
+.module-tools h2 svg, .panel h2 svg { display: inline-block; vertical-align: -.13em; }
+.material-rule-list { margin: .6rem 0 .2rem; padding-left: 1.25rem; list-style: disc; }
+.material-rule-list li { margin-bottom: .4rem; color: var(--muted); }
 .temporary-password { display: block; padding: .75rem; border-radius: 7px; background: #eef2f7; overflow-wrap: anywhere; }
 .skip { position: absolute; left: -999px; }
 .skip:focus { left: 1rem; top: 1rem; background: white; padding: .5rem; z-index: 2; }
@@ -222,6 +255,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 7px; }
   .topbar { min-height: 54px; }
   .workspace-path { display: none; }
   .topbar-account { justify-content: space-between; width: 100%; }
+  .quiz-workbench { grid-template-columns: minmax(0,1fr); gap: 0; }
   .metrics { gap: .4rem; }
   .metric { padding: .65rem .47rem; gap: .25rem; align-items: flex-start; flex-direction: column; }
   .metric-icon { width: 29px; height: 29px; }

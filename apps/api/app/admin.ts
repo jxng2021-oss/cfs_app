@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { adminUserDto, hashPassword, requireRole, revokeSessions, temporaryPassword, viewer, type Services, type UserRow } from './auth.js';
 import { audit, transaction } from './db.js';
 import { ApiError, data, email, empty, id, invalid, notFound, pageFields, paged, pgError, read, safeText } from './http.js';
+import { reconcileExpired } from './quiz-engine.js';
 
 const roleField = z.enum(['ADMIN', 'LECTURER', 'STUDENT']);
 const userCreate = z.strictObject({ email, displayName: safeText(120), role: z.enum(['LECTURER', 'STUDENT']) });
@@ -55,7 +56,7 @@ export function adminRoutes({ pool, clock }: Services) {
     const input = read(userEdit, req.body);
     if (input.displayName === undefined && input.isActive === undefined) invalid('Provide at least one change.');
     const user = await transaction(pool, async db => {
-      const current = (await db.query<UserRow>('SELECT * FROM users WHERE id = $1 FOR UPDATE', [userId])).rows[0];
+      const current = (await db.query<UserRow>('SELECT * FROM users WHERE id = $1 FOR NO KEY UPDATE', [userId])).rows[0];
       if (!current) notFound();
       if (current.role === 'ADMIN' && input.isActive !== undefined) throw new ApiError(403, 'FORBIDDEN', 'Administrator status cannot be changed here.');
       if (input.isActive === false && current.is_active && current.role === 'LECTURER') {
@@ -63,6 +64,17 @@ export function adminRoutes({ pool, clock }: Services) {
         if (ownsModules) throw new ApiError(409, 'INVALID_STATE', 'Reassign this lecturer’s draft and active modules first.');
       }
       const now = await clock(db);
+      if (input.isActive === false && current.is_active && current.role === 'STUDENT') {
+        const { rows: modules } = await db.query<{ id:string }>(
+          `SELECT m.id FROM modules m WHERE EXISTS (SELECT 1 FROM assessments a JOIN quiz_attempts q ON q.assessment_id=a.id
+           WHERE a.module_id=m.id AND q.student_id=$1 AND q.status='IN_PROGRESS') ORDER BY m.id FOR UPDATE OF m`, [userId],
+        );
+        const cutoff = await clock(db);
+        for (const module of modules) await reconcileExpired(db,module.id,cutoff,userId);
+        if ((await db.query("SELECT 1 FROM quiz_attempts WHERE student_id=$1 AND status='IN_PROGRESS' LIMIT 1", [userId])).rowCount) {
+          return new ApiError(409,'ATTEMPT_IN_PROGRESS','The student has an in-progress quiz attempt.');
+        }
+      }
       const updated = (await db.query<UserRow>(
         'UPDATE users SET display_name = coalesce($2, display_name), is_active = coalesce($3, is_active), updated_at = $4 WHERE id = $1 RETURNING *',
         [userId, input.displayName, input.isActive, now],
@@ -73,6 +85,7 @@ export function adminRoutes({ pool, clock }: Services) {
       }
       return updated;
     });
+    if (user instanceof ApiError) throw user;
     data(res, adminUserDto(user));
   });
 
