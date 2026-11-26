@@ -94,6 +94,8 @@ Resources:
       Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-vpc'}]
   InternetGateway:
     Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-igw'}]
   InternetAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
@@ -103,10 +105,12 @@ Resources:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-rt-public'}]
   PrivateRoutes:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-rt-private'}]
   InternetRoute:
     Type: AWS::EC2::Route
     DependsOn: InternetAttachment
@@ -179,28 +183,35 @@ Resources:
   AlbGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
+      GroupName: !Sub '${ResourcePrefix}-sg-alb'
       GroupDescription: Public access to the load balancer
       VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-sg-alb'}]
       SecurityGroupIngress:
         - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
         - !If [UseTls, {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}, !Ref 'AWS::NoValue']
   WebGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
+      GroupName: !Sub '${ResourcePrefix}-sg-web'
       GroupDescription: Application traffic from the ALB only
       VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-sg-web'}]
       SecurityGroupIngress:
         - {IpProtocol: tcp, FromPort: 3000, ToPort: 3000, SourceSecurityGroupId: !Ref AlbGroup}
   DatabaseGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
+      GroupName: !Sub '${ResourcePrefix}-sg-db'
       GroupDescription: Database traffic from the web and migration hosts
       VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub '${ResourcePrefix}-sg-db'}]
       SecurityGroupIngress:
         - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref WebGroup}
   DatabaseSubnets:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
+      DBSubnetGroupName: !Sub '${ResourcePrefix}-db-subnets'
       DBSubnetGroupDescription: Two private subnets for the shared admissions PostgreSQL database
       SubnetIds: [!Ref DataA, !Ref DataB]
   Database:

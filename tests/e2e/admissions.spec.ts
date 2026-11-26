@@ -63,7 +63,7 @@ test('an officer creates an applicant and takes an application from submission t
   for (const status of ['Draft', 'Submitted', 'Under review', 'Offer issued', 'Offer accepted', 'Enrolled']) await expect(history.getByText(status, { exact: true })).toBeVisible();
 
   await page.getByRole('link', { name: 'Browser Tester ' + suffix }).click();
-  await expect(page.getByRole('main').getByText('Enrolled', { exact: true })).toBeVisible();
+  await expect(page.getByRole('main').getByText('Enrolled', { exact: true }).first()).toBeVisible();
 });
 
 test('rejecting requires a reason and the decision appears in the history', async ({ page }) => {
