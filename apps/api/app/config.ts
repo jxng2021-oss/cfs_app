@@ -1,5 +1,4 @@
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { resolve } from 'node:path';
 import { z } from 'zod';
 
 const bool = z.enum(['true', 'false']).transform(value => value === 'true');
@@ -13,9 +12,6 @@ const configSchema = z.object({
   SESSION_ABSOLUTE_HOURS: z.coerce.number().int().positive().default(12),
   TRUST_PROXY: bool.default(false),
   COOKIE_SECURE: bool.optional(),
-  STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
-  UPLOAD_DIR: z.string().min(1).default('.data/uploads'),
-  S3_BUCKET: z.string().min(3).optional(),
 });
 
 export type Config = ReturnType<typeof parseConfig>;
@@ -28,8 +24,7 @@ export function parseConfig(env: Record<string, unknown>) {
   const cookieSecure = values.COOKIE_SECURE ?? https;
   if (cookieSecure !== https) throw new Error('COOKIE_SECURE must match the APP_ORIGIN protocol');
   if (values.SESSION_IDLE_MINUTES > values.SESSION_ABSOLUTE_HOURS * 60) throw new Error('Idle timeout exceeds absolute timeout');
-  if (values.STORAGE_DRIVER === 's3' && !values.S3_BUCKET) throw new Error('S3_BUCKET is required with S3 storage');
-  return { ...values, COOKIE_SECURE: cookieSecure, UPLOAD_DIR: resolve(values.UPLOAD_DIR) };
+  return { ...values, COOKIE_SECURE: cookieSecure };
 }
 
 export async function loadEnvironment(env = process.env) {

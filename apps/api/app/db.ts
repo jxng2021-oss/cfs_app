@@ -11,6 +11,9 @@ export const databaseClock: Clock = async db => {
   return result.rows[0].time;
 };
 
+// Calendar dates (date of birth, commencement) stay as YYYY-MM-DD strings instead of shifting through the server's time zone.
+pg.types.setTypeParser(1082, value => value);
+
 export function createPool(connectionString: string) {
   const pool = new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000 });
   pool.on('error', () => console.error(JSON.stringify({ event: 'idle_database_connection_error' })));
@@ -47,11 +50,4 @@ export async function migrate(pool: pg.Pool, path = resolve('migrations')) {
       await db.query('INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)', [name, checksum]);
     }
   });
-}
-
-export async function audit(db: Db, actorId: string | null, event: string, entity: string, entityId: string, moduleId: string | null = null, metadata: Record<string, string> = {}) {
-  await db.query(
-    'INSERT INTO audit_events (actor_id, event_type, entity_type, entity_id, module_id, metadata) VALUES ($1, $2, $3, $4, $5, $6)',
-    [actorId, event, entity, entityId, moduleId, metadata],
-  );
 }

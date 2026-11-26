@@ -2,14 +2,14 @@
 set -euo pipefail
 
 image=${1:?Supply a locally available application image}
-suffix="lms-smoke-$$-$RANDOM"
+suffix="admissions-smoke-$$-$RANDOM"
 network="$suffix"
 db="$suffix-db"
 app="$suffix-app"
 secret="$(openssl rand -hex 32)"
 fixture_password="$(openssl rand -hex 20)"
 credentials=(
-  --env "DATABASE_URL=postgres://lms:local-smoke-only@$db:5432/lms"
+  --env "DATABASE_URL=postgres://admissions:local-smoke-only@$db:5432/admissions"
   --env "SESSION_PEPPER=$secret"
   --env "APP_ORIGIN=http://localhost:3000"
 )
@@ -26,10 +26,10 @@ trap cleanup EXIT
 
 docker network create "$network" >/dev/null
 docker run --detach --network "$network" --name "$db" \
-  --env POSTGRES_USER=lms --env POSTGRES_DB=lms --env POSTGRES_PASSWORD=local-smoke-only \
+  --env POSTGRES_USER=admissions --env POSTGRES_DB=admissions --env POSTGRES_PASSWORD=local-smoke-only \
   postgres:18-alpine >/dev/null
 for attempt in {1..30}; do
-  if docker exec "$db" pg_isready -h 127.0.0.1 -U lms -d lms >/dev/null 2>&1; then
+  if docker exec "$db" pg_isready -h 127.0.0.1 -U admissions -d admissions >/dev/null 2>&1; then
     break
   fi
   if [[ $attempt == 30 ]]; then
@@ -59,11 +59,11 @@ docker exec --env "SMOKE_PASSWORD=$fixture_password" "$app" node --input-type=mo
   const home = await fetch(origin);
   assert.equal(home.status, 200);
   const html = await home.text();
-  assert.match(html, /Mini LMS/);
+  assert.match(html, /<title>Admissions<\/title>/);
   const asset = html.match(/src="(\/assets\/[^"]+)"/)?.[1];
   assert.ok(asset);
   assert.equal((await fetch(origin + asset)).status, 200);
-  const login = await fetch(origin + "/api/v1/auth/login", {
+  const login = await fetch(origin + "/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: origin },
     body: JSON.stringify({ email: "smoke@example.test", password: process.env.SMOKE_PASSWORD }),
@@ -71,6 +71,8 @@ docker exec --env "SMOKE_PASSWORD=$fixture_password" "$app" node --input-type=mo
   assert.equal(login.status, 200);
   assert.match(login.headers.get("Set-Cookie"), /HttpOnly/);
   assert.equal((await login.json()).data.mustChangePassword, true);
+  const instance = await (await fetch(origin + "/api/infrastructure/instance")).json();
+  assert.equal(instance.data.deployment, "Local development");
 '
 docker stop --time 30 "$app" >/dev/null
 test "$(docker inspect --format '{{.State.ExitCode}}' "$app")" = "0"

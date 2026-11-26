@@ -1,78 +1,149 @@
-# CFS Learn
+# CFS Admissions
 
-CFS Learn is a role-based LMS with administrator-provisioned accounts, enrolled modules, private learning files, assignments, timed quizzes, controlled grade release, prerequisites, lecturer analytics, and announcements. The React client uses shadcn/ui and Lucide React. Express serves the client and API on one origin, with PostgreSQL for application data and sessions. See the [acceptance coverage](IMPLEMENTATION_STATUS.md).
+A university **Student Admissions and Applicant Management System** for admissions officers and administrators. Staff manage prospective students, take applications through a validated review workflow, run programmes and admission intakes with enforced capacity, and monitor admissions analytics. It is built to run on a highly available AWS deployment (Application Load Balancer, EC2 Auto Scaling across two Availability Zones, shared PostgreSQL).
 
-## Quick start with Docker
+All data shipped with the project is fictional. Demo email addresses use the reserved `example.test` domain.
 
-Use Docker Desktop or Docker Engine with Compose. Run these commands from the repository root in PowerShell.
+## Features
 
-```powershell
-Copy-Item .env.example .env
-node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+| Area | What staff can do |
+| --- | --- |
+| Overview | Live summary cards, submissions over time, applications by programme and intake, status distribution, admission rates, capacity utilisation, items needing attention, upcoming deadlines, recent decisions and activity, quick actions |
+| Applicants | Create, view, edit, archive/restore and (when unused) delete applicants. Search, filter by status/nationality/qualification, sort any column, paginate, bulk-select and export CSV. Profile shows personal, contact and academic details, applications, internal notes and activity history |
+| Applications | Create (draft or submitted), assign programme/intake/reviewer, review with context-sensitive actions, review notes, status timeline, requirement check against the programme, offer response deadlines |
+| Workflow | Draft → Submitted → Under review → Offer issued → Offer accepted → Enrolled, with Additional information required, Waitlisted, Rejected, Offer declined and Withdrawn. Every transition is validated on the server and recorded with previous/new status, time, user and reason |
+| Programmes | Create, edit, deactivate, archive and (when unused) delete. Intakes, applications and admission statistics per programme |
+| Admission intakes | Create and edit windows and capacity, open/close/complete/cancel admissions, monitor remaining places, per-intake statistics. Enrolment is blocked at capacity, including under concurrent requests |
+| Analytics | Filters for date range, academic year, faculty, programme, intake and status. Applications over time, by nationality, programme, faculty and intake; status distribution; offer, acceptance, rejection and enrolment rates; programme demand; intake utilisation; average processing time |
+| Activity Logs | Append-only record of every administrative action with search, filters, sorting and pagination (administrators) |
+| Infrastructure Status | Serving EC2 instance, Availability Zone, Region, version, environment, health, database latency, server start time, last load-balancer health check, and a 10-request sampler that shows ALB distribution across instances |
+| Settings | Institution name and logo, default academic year, offer response window, review target, rejection-reason rule, reference number format, date format, student admin number, users and roles, personal table density, password |
+
+### Roles
+
+| Role | Access |
+| --- | --- |
+| Administrator | Everything, including programmes, intakes, users and roles, settings and the Activity Logs |
+| Admissions officer | Applicants and applications: create, edit, review and record decisions. Read-only on programmes and intakes |
+| Read-only viewer | View records, dashboards and analytics; no changes |
+
+Permissions are enforced by the API (`403 FORBIDDEN`); the interface hides actions a role cannot use.
+
+## Architecture
+
+- **Single Node.js 22 service** (Express 5, TypeScript) serving the JSON API under `/api` and the compiled React 19 interface.
+- **PostgreSQL** is the only state: business data, sessions, CSRF tokens, login rate limits, settings (including the logo) and the activity log. Any instance can serve any request, so instances are interchangeable and replaceable.
+- **Authentication:** server-side sessions in PostgreSQL with HttpOnly cookies, CSRF tokens, Argon2id password hashing, idle and absolute timeouts, and database-backed login rate limiting that works across instances.
+- **Concurrency:** optimistic `version` checks on every edit (`409 VERSION_CONFLICT`); enrolment locks the intake row so confirmed enrolments never exceed capacity.
+- **Times** are stored in UTC and shown in Singapore time.
+
+```
+apps/api/app/   API: domain.ts (workflow rules), applicants, applications, programmes, intakes, analytics, stats,
+                activity, settings, users, infrastructure, auth, http, db, cli, demo-data
+apps/web/src/   React pages: overview, applicants, applications, programmes, intakes, analytics, activity,
+                infrastructure, settings; shared ui.tsx, charts.tsx and shadcn components
+migrations/     SQL migrations (006-admissions.sql defines the admissions schema)
+infra/aws/      CloudFormation template and deployment guide
+tests/          unit (domain rules), integration (API against PostgreSQL), e2e (Playwright)
+SPECIFICATION.md   data model, workflow, statistics and API
 ```
 
-Paste the generated value into `SESSION_PEPPER` in `.env`. Set `DEMO_PASSWORD` to a local password of at least 12 characters, then run the stack.
+See [SPECIFICATION.md](SPECIFICATION.md) for the data model, workflow, analytics definitions and API, and [infra/aws/ARCHITECTURE.md](infra/aws/ARCHITECTURE.md) for the high-availability design.
 
-```powershell
-docker compose up -d db
-docker compose build app
-docker compose run --rm app node dist/api/cli.js migrate
-docker compose run --rm app node dist/api/cli.js seed
-docker compose up -d app
+## Run locally with Docker
+
+Requires Docker Desktop.
+
+```bash
+cp .env.example .env
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Open [Mini LMS](http://localhost:3000). Every seeded demo account uses your `DEMO_PASSWORD`. Try `admin@example.test`, `lecturer-a@example.test` and `student-a@example.test`. `lecturer-b@example.test` provides a separate ownership scope. `docker compose down` stops the stack and retains its PostgreSQL and upload volumes.
+Paste the generated value into `SESSION_PEPPER` and set `DEMO_PASSWORD` to at least 12 characters. Optionally set `STUDENT_ADMIN_NUMBER`.
 
-In the demo module SE101, read and complete the required Week 1 materials and achieve at least 70% on Quiz 1 to unlock Week 2. The lecturer can review results and analytics for the existing synthetic activity. Assignment and quiz windows are set relative to the first seed run. Use a fresh demo database for a new timetable, or pass `DEMO_CLOCK_ISO` to the seed command to choose the initial time anchor.
+```bash
+docker compose up -d --build
+docker compose exec app node dist/api/cli.js migrate
+docker compose exec app node dist/api/cli.js seed
+```
 
-### Development with Node
+Open <http://localhost:3000>. Every demo account uses your `DEMO_PASSWORD`:
 
-Use Node.js 22.12+ in the 22.x series. Prepare `.env` as above and run:
+| Account | Role |
+| --- | --- |
+| `admin@example.test` | Administrator |
+| `officer-a@example.test`, `officer-b@example.test` | Admissions officers |
+| `viewer@example.test` | Read-only viewer |
 
-```text
-docker compose up -d db
+The seed creates 8 programmes across 4 faculties, 24 intakes (past, open and upcoming), 72 fictional applicants, about 95 applications in every status with consistent histories, review notes and activity logs. It runs only when no programmes exist and is disabled when `NODE_ENV=production`.
+
+`docker compose down` stops the stack and keeps the database volume. To reset the local data, run `docker compose down -v` and repeat the migrate and seed steps.
+
+### Upgrading a database from the former LMS
+
+Migration `006-admissions.sql` converts an existing LMS database in place. It keeps user accounts, sessions and user-account history; maps `LECTURER` accounts to `OFFICER` and `STUDENT` accounts to `VIEWER`; and **removes all learning data** (modules, content, assessments, submissions, grades and file records), which has no admissions equivalent. Take a database snapshot first if that data matters. The local Compose file uses a new `admissions-database` volume, so an old LMS volume is left untouched.
+
+## Run without Docker
+
+With Node 22 and a PostgreSQL instance reachable from `DATABASE_URL`:
+
+```bash
 npm ci
 npm run build
 npm run migrate
-npm run seed
-npm start
+npm run seed      # development only
+npm start         # or: npm run dev
 ```
 
-`npm run dev` rebuilds the client once and watches the API TypeScript files. Run `npm run build:web` again after changing the client. Compose publishes the development database on `127.0.0.1:55432`. If port 3000 is in use outside Compose, update `PORT` and `APP_ORIGIN` together.
+## Environment variables
 
-Use a fresh database and `npm run bootstrap-admin` with `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` when provisioning a real initial administrator. The bootstrap command is idempotent and the first login requires a password change. Provide bootstrap values only for that command. The demo seed is development/test-only and is intended for a dedicated synthetic database.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | Shared PostgreSQL connection string |
+| `SESSION_PEPPER` | Yes | At least 32 random characters; identical on every instance |
+| `APP_ORIGIN` | Yes | Exact public origin, e.g. `https://admissions.example.edu` or the ALB URL |
+| `PORT` | No | Default `3000` |
+| `TRUST_PROXY` | No | `true` behind the ALB so client IPs and HTTPS are read correctly |
+| `COOKIE_SECURE` | No | Must match the `APP_ORIGIN` protocol; defaults from it |
+| `SESSION_IDLE_MINUTES`, `SESSION_ABSOLUTE_HOURS` | No | Session lifetimes (60 minutes, 12 hours) |
+| `SECRET_ID` | No | Secrets Manager secret supplying `DATABASE_URL` and `SESSION_PEPPER` |
+| `INSTANCE_ID`, `AVAILABILITY_ZONE`, `AWS_REGION` | No | Serving instance identity, written by the launch template from IMDSv2 |
+| `INSTANCE_METADATA` | No | `imds` makes the server look up its instance ID and zone with IMDSv2 at startup when they are not supplied |
+| `APP_ENVIRONMENT`, `APP_VERSION` | No | Labels on Infrastructure Status (version defaults to `package.json`) |
+| `STUDENT_ADMIN_NUMBER` | No | Default for the admin number shown in the sidebar (editable in Settings) |
+| `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` | Bootstrap only | First administrator for a real deployment |
+| `DEMO_PASSWORD`, `DEMO_CLOCK_ISO` | Seed only | Demo account password; optional fixed clock for demo dates |
 
-## Verification
+Never commit `.env`. On AWS, secrets come from Secrets Manager.
 
-Start a separate disposable PostgreSQL container for integration and browser tests.
+## Tests
 
-```text
-docker run --detach --name cfs-lms-test --publish 127.0.0.1:55433:5432 --env POSTGRES_USER=lms --env POSTGRES_PASSWORD=local-test-db-only --env POSTGRES_DB=lms_test postgres:18-alpine
-docker exec cfs-lms-test pg_isready -U lms -d lms_test
+Integration and browser tests need a dedicated PostgreSQL database whose name ends in `_test`:
+
+```bash
+docker run --detach --name cfs-admissions-test --publish 127.0.0.1:55433:5432 \
+  --env POSTGRES_USER=admissions --env POSTGRES_PASSWORD=local-test-db-only --env POSTGRES_DB=admissions_test postgres:18-alpine
+
 npm run lint
 npm run typecheck
-npm test
-npm run test:integration
-npm run build
-npx playwright install chromium
-npm run test:e2e
-docker rm -f -v cfs-lms-test
+npm test                    # domain rules: workflow, requirements, rates, references
+npm run test:integration    # API against PostgreSQL in an isolated schema
+npm run build && npm run test:e2e   # Playwright; seeds the test database
 ```
 
-Wait for `pg_isready` to report that PostgreSQL is accepting connections. Set `TEST_DATABASE_URL` to use a different dedicated database with an `_test` suffix. Integration checks create and drop their own isolated PostgreSQL schema. Browser checks seed fixtures into the supplied database, so use disposable data. The browser runner serves the compiled application on port 3004 by default. Set `E2E_PORT` to override it.
+Set `TEST_DATABASE_URL` to use a different `_test` database. Integration tests create and drop their own schema. Browser tests migrate and seed the test database and can be re-run against it.
 
-## Docker delivery
+## Health and instance endpoints
 
-On pull requests and pushes, [GitHub Actions](https://github.com/jxng2021-oss/cfs_app/actions) validates the AWS template and runs lint, type checking, dependency audit, unit tests, PostgreSQL integration tests and Chromium journeys. It builds a Linux/amd64 image, tests migrations, admin bootstrap, startup, SPA assets, sign-in and shutdown inside the container, then uploads the tested image as a downloadable artifact. A separate publish job loads that same artifact and pushes it to GitHub Container Registry on `main` and version tags such as `v0.1.0`. Each publish includes a `sha-<commit>` tag plus the branch or version tag.
+| Endpoint | Auth | Purpose |
+| --- | --- | --- |
+| `GET /health` | Public | Liveness for the ALB target group; no database call, returns `200 {"status":"ok"}` |
+| `GET /health/ready` | Public | Readiness: `200` when the shared database answers within 1 s, else `503` |
+| `GET /api/infrastructure/instance` | Public | Instance ID, zone, region, version, environment, start time. No credentials, tokens or configuration |
+| `GET /api/infrastructure/status` | Signed in | Adds health, database latency and the last load-balancer health check |
 
-```text
-docker pull ghcr.io/jxng2021-oss/cfs_app:main
-docker build --platform linux/amd64 -t cfs-mini-lms:dev .
-bash scripts/smoke-image.sh cfs-mini-lms:dev
-```
+Every response from an EC2 instance also carries `X-Served-By: <instance-id> <zone>`.
 
-Private packages require a GHCR login with package read access. Release operators should deploy a specific commit tag or digest. Run migrations once as a release step with `node dist/api/cli.js migrate` before replacing instances. Use `/health` for the ALB liveness check and `/health/ready` to check the database. Set an exact `APP_ORIGIN` and enable `TRUST_PROXY=true` only behind the trusted proxy hop. An optional `SECRET_ID` loads the supported database, session pepper and bootstrap configuration from AWS Secrets Manager via the instance role.
+## AWS deployment
 
-Uploads use private local storage or private S3 objects. `npm run cleanup-uploads` removes expired unattached uploads and discarded material files in batches of 100. The application checks file type and size and serves attachments through its authorisation rules. Malware scanning and load certification are outside the prototype scope.
-
-AWS provisioning is manual. The [AWS deployment guide](infra/aws/README.md) includes the CloudFormation template, database bootstrap, release steps, and lab verification checklist. Keep passwords, session keys, infrastructure credentials, actual student data and the private design documents out of Git and image build contexts.
+The [deployment guide](infra/aws/README.md) walks through the CloudFormation stack (VPC, two AZs, ALB, Auto Scaling group with target tracking, launch template, encrypted EBS, private RDS PostgreSQL, CloudWatch Logs), database roles, migrations, bootstrapping the first administrator, enabling the fleet and verifying load balancing and instance replacement.

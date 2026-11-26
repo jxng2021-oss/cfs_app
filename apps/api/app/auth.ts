@@ -7,7 +7,7 @@ import type { Config } from './config.js';
 import { type Clock, type Db, transaction } from './db.js';
 import { ApiError, data, email, empty, read } from './http.js';
 
-export const roles = ['ADMIN', 'LECTURER', 'STUDENT'] as const;
+export const roles = ['ADMIN', 'OFFICER', 'VIEWER'] as const;
 export type Role = typeof roles[number];
 export type UserRow = {
   id: string; email_normalized: string; display_name: string; role: Role; is_active: boolean;
@@ -17,7 +17,7 @@ type SessionRow = UserRow & { last_seen_at: Date; expires_at: Date; csrf_token_h
 type Viewer = { user: SessionRow; tokenHash: string; csrfToken: string };
 export type Services = { pool: pg.Pool; config: Config; clock: Clock };
 
-const cookieName = 'lms_session';
+const cookieName = 'admissions_session';
 const tokenFormat = /^[A-Za-z0-9_-]{43}$/;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const sign = (pepper: string, value: string) => createHmac('sha256', pepper).update(value).digest('base64url');
@@ -111,6 +111,8 @@ export const requireRole = (...permitted: Role[]): RequestHandler => (_req, res,
   if (!permitted.includes(viewer(res).user.role)) throw new ApiError(403, 'FORBIDDEN', 'Your role cannot perform this action.');
   next();
 };
+/** Administrators and admissions officers may change applicant and application records; viewers are read-only. */
+export const requireEditor = requireRole('ADMIN', 'OFFICER');
 
 const requireChangedPassword: RequestHandler = (_req, res, next) => {
   if (viewer(res).user.must_change_password) throw new ApiError(403, 'PASSWORD_CHANGE_REQUIRED', 'Change your temporary password first.');

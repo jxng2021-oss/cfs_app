@@ -2,44 +2,56 @@ import { Button } from './components/ui/button.js';
 import { Input } from './components/ui/input.js';
 import { useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, matchPath, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, BookOpen, ChevronRight, ClipboardList, Eye, EyeOff, GraduationCap, LayoutGrid, LogOut, Menu, Shield, UserRound, UsersRound } from 'lucide-react';
-import { ApiError, get, mutate, type Session } from './api.js';
-import { AdminAudit, AdminEnrolments, AdminModules, AdminUsers } from './admin.js';
-import { ModuleDetail, ModuleList, ModuleRoster } from './modules.js';
-import { MaterialDetail, TopicDetail, TopicList } from './learning.js';
-import { AssessmentDetail, AssessmentEdit, AssessmentList, QuizAttempt } from './assessments.js';
-import { Analytics, AnalyticsSettings, Announcements, Gradebook, Marking } from './academic.js';
-import { ErrorMessage, Heading, Resource, field, submit, useAction, useResource } from './ui.js';
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Activity, ArrowRight, BarChart3, CalendarRange, ChevronRight, ClipboardList, Eye, EyeOff, GraduationCap, LayoutDashboard, LogOut, Menu,
+  Server, Settings as SettingsIcon, Shield, UsersRound,
+} from 'lucide-react';
+import { ApiError, get, mutate, type PublicSettings, type Session } from './api.js';
+import { ErrorMessage, Resource, Toaster, field, setDateStyle, statusText, submit, useAction, useResource } from './ui.js';
+import { Overview } from './overview.js';
+import { ApplicantDetail, ApplicantForm, ApplicantList } from './applicants.js';
+import { ApplicationCreate, ApplicationDetail, ApplicationList } from './applications.js';
+import { ProgrammeDetail, ProgrammeForm, ProgrammeList } from './programmes.js';
+import { IntakeDetail, IntakeForm, IntakeList } from './intakes.js';
+import { Analytics } from './analytics.js';
+import { ActivityLog } from './activity.js';
+import { Infrastructure } from './infrastructure.js';
+import { SettingsPage } from './settings.js';
+import { BrandingContext, defaultBranding, useBranding } from './branding.js';
 import './theme.css';
 import './styles.css';
 
-const roleNames = { ADMIN: 'Administrator', LECTURER: 'Lecturer', STUDENT: 'Student' };
-const landing = (session: Session) => session.user.role === 'ADMIN' ? '/admin/modules' : '/modules';
 
-function Brand() {
-  return <span className="brand"><span className="brand-mark"><GraduationCap aria-hidden="true" strokeWidth={1.9} /></span><span>CFS<span className="brand-separator" />Learn</span></span>;
+function Brand({ settings }: { settings: PublicSettings }) {
+  return <span className="brand">
+    {settings.institutionLogo
+      ? <img className="brand-logo" src={settings.institutionLogo} alt="" />
+      : <span className="brand-mark"><GraduationCap aria-hidden="true" strokeWidth={1.9} /></span>}
+    <span className="brand-text"><span>Admissions</span><small>{settings.institutionName}</small></span>
+  </span>;
 }
 
 function AccountForm({ session, setSession, expired, signOut }: { session?: Session; setSession: (session: Session) => void; expired: boolean; signOut?: () => Promise<void> }) {
   const action = useAction();
   const navigate = useNavigate();
+  const { settings } = useBranding();
   const changing = Boolean(session);
   const [showPassword, setShowPassword] = useState(false);
   return <main className="auth-layout">
     <section className="auth-panel">
-      <div className="auth-header"><Brand /></div>
+      <div className="auth-header"><Brand settings={settings} /></div>
       <div className="auth-inner">
         <div className="auth-copy">
           <h1>{changing ? 'Change your password' : 'Sign in'}</h1>
-          <p>{expired ? 'Your session expired. Sign in again to continue.' : session?.mustChangePassword ? 'Set a new password to finish activating your account.' : changing ? 'Use at least 12 characters.' : 'Use your learning account to access your modules.'}</p>
+          <p>{expired ? 'Your session expired. Sign in again to continue.' : session?.mustChangePassword ? 'Set a new password to finish activating your account.' : changing ? 'Use at least 12 characters.' : 'Sign in to manage applicants, applications and admission intakes.'}</p>
         </div>
         <form className="stack" onSubmit={submit(form => void action.run(async () => {
           const updated = changing
-            ? await mutate<Session>('/auth/change-password', 'POST', { currentPassword: field(form, 'currentPassword'), newPassword: field(form, 'newPassword') }, session?.csrfToken)
-            : await mutate<Session>('/auth/login', 'POST', { email: field(form, 'email'), password: field(form, 'password') });
+            ? await mutate<Session>('/auth/change-password', 'POST', { currentPassword: field(form, 'currentPassword'), newPassword: String(form.get('newPassword') ?? '') }, session?.csrfToken)
+            : await mutate<Session>('/auth/login', 'POST', { email: field(form, 'email'), password: String(form.get('password') ?? '') });
           setSession(updated);
-          navigate(updated.mustChangePassword ? '/change-password' : landing(updated), { replace: true });
+          navigate(updated.mustChangePassword ? '/change-password' : '/', { replace: true });
         }))}>
           {changing ? <>
             <label>Current password<Input type="password" name="currentPassword" autoComplete="current-password" required /></label>
@@ -55,68 +67,80 @@ function AccountForm({ session, setSession, expired, signOut }: { session?: Sess
           </>}
           <ErrorMessage message={action.error} />
           <Button className="auth-submit" disabled={action.pending}>{action.pending ? 'Please wait…' : changing ? 'Change password' : 'Sign in'}<ArrowRight size={18} aria-hidden="true" /></Button>
-          {session && !session.mustChangePassword && <Link to="/profile" className="back">Back to profile</Link>}
+          {session && !session.mustChangePassword && <Button type="button" variant="outline" onClick={() => navigate('/settings?tab=account')}>Back to settings</Button>}
           {signOut && <Button type="button" variant="outline" disabled={action.pending} onClick={() => void action.run(signOut)}>Sign out</Button>}
         </form>
-        {!changing && <div className="auth-help"><Shield size={16} aria-hidden="true"/><p>For account or password help, contact your LMS administrator.</p></div>}
+        {!changing && <div className="auth-help"><Shield size={16} aria-hidden="true" /><p>For account or password help, contact your admissions system administrator.</p></div>}
       </div>
     </section>
     <div className="auth-art" aria-hidden="true" />
   </main>;
 }
 
+type NavItem = { to: string; label: string; icon: typeof Activity; end?: boolean; admin?: boolean };
+const sections: { title: string; links: NavItem[] }[] = [
+  { title: 'Workspace', links: [
+    { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
+    { to: '/applicants', label: 'Applicants', icon: UsersRound },
+    { to: '/applications', label: 'Applications', icon: ClipboardList },
+    { to: '/programmes', label: 'Programmes', icon: GraduationCap },
+    { to: '/intakes', label: 'Admission Intakes', icon: CalendarRange },
+  ] },
+  { title: 'Insights', links: [
+    { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+    { to: '/activity', label: 'Activity Logs', icon: Activity, admin: true },
+  ] },
+  { title: 'System', links: [
+    { to: '/infrastructure', label: 'Infrastructure Status', icon: Server },
+    { to: '/settings', label: 'Settings', icon: SettingsIcon },
+  ] },
+];
+
 function Layout({ session, children, signOut }: { session: Session; children: ReactNode; signOut: () => Promise<void> }) {
   const action = useAction();
+  const { settings } = useBranding();
   const [menuOpen, setMenuOpen] = useState(false);
   const { pathname } = useLocation();
   const admin = session.user.role === 'ADMIN';
-  const context = pathname.startsWith('/admin/users') ? 'User accounts' : pathname.startsWith('/admin/audit') ? 'Audit log' : pathname.startsWith('/profile') ? 'Profile' : admin ? 'Modules' : 'My modules';
-  const moduleId = matchPath('/modules/:moduleId/*', pathname)?.params.moduleId;
-  const modulePath = '/modules/' + moduleId;
+  const current = sections.flatMap(section => section.links.map(link => ({ ...link, section: section.title })))
+    .filter(link => link.end ? pathname === link.to : pathname.startsWith(link.to))[0];
   const initials = session.user.displayName.trim().split(/\s+/u).slice(0, 2).map(part => Array.from(part)[0] ?? '').join('').toUpperCase();
+  useEffect(() => { document.title = (current ? current.label + ' · ' : '') + settings.institutionName + ' Admissions'; }, [current, settings.institutionName]);
   return <div className="shell">
     <a href="#main-content" className="skip">Skip to content</a>
     <aside className="sidebar">
       <div className="sidebar-header">
-        <Link to={landing(session)} aria-label="Mini LMS home"><Brand /></Link>
-        <Button variant="outline" size="sm" className="mobile-menu" aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}><Menu size={17} aria-hidden="true"/>Menu</Button>
+        <NavLink to="/" aria-label="Admissions overview"><Brand settings={settings} /></NavLink>
+        <Button variant="outline" size="sm" className="mobile-menu" aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}><Menu size={17} aria-hidden="true" />Menu</Button>
       </div>
       <nav id="main-navigation" className={menuOpen ? 'open' : undefined} aria-label="Main navigation" onClick={event => {
         if (event.target instanceof Element && event.target.closest('a')) setMenuOpen(false);
       }}>
-        <p className="nav-title">{admin ? 'Administration' : 'Workspace'}</p>
-        {admin ? <>
-          <NavLink to="/admin/modules"><LayoutGrid size={18} aria-hidden="true"/>Modules</NavLink>
-          <NavLink to="/admin/users"><UsersRound size={18} aria-hidden="true"/>User accounts</NavLink>
-          <NavLink to="/admin/audit"><ClipboardList size={18} aria-hidden="true"/>Audit log</NavLink>
-        </> : <NavLink to="/modules"><BookOpen size={18} aria-hidden="true"/>My modules</NavLink>}
-        <p className="nav-title">Account</p>
-        <NavLink to="/profile"><UserRound size={18} aria-hidden="true"/>Profile</NavLink>
+        {sections.map(section => <div key={section.title} className="nav-section">
+          <p className="nav-title">{section.title}</p>
+          {section.links.filter(link => !link.admin || admin).map(link => {
+            const Icon = link.icon;
+            return <NavLink key={link.to} to={link.to} end={link.end}><Icon size={18} aria-hidden="true" />{link.label}</NavLink>;
+          })}
+        </div>)}
       </nav>
+      <div className="sidebar-footer">
+        <span>Admin number</span>
+        <strong>{settings.adminNumber || 'Not set'}</strong>
+      </div>
     </aside>
     <div className="workspace">
       <header className="topbar">
-        <div className="workspace-path" aria-hidden="true"><span>{admin ? 'Administration' : 'Workspace'}</span><ChevronRight size={14}/><strong>{context}</strong></div>
+        <div className="workspace-path" aria-hidden="true"><span>{current?.section ?? 'Workspace'}</span><ChevronRight size={14} /><strong>{current?.label ?? 'Overview'}</strong></div>
         <div className="topbar-account">
-          <div className="identity"><span className="avatar" aria-hidden="true">{initials}</span><div><strong>{session.user.displayName}</strong><span>{roleNames[session.user.role]}</span></div></div>
-          <Button variant="outline" size="sm" className="sign-out" disabled={action.pending} onClick={() => void action.run(signOut)}><LogOut size={16} aria-hidden="true"/>Sign out</Button>
+          <div className="identity"><span className="avatar" aria-hidden="true">{initials}</span><div><strong>{session.user.displayName}</strong><span>{statusText(session.user.role)}</span></div></div>
+          <Button variant="outline" size="sm" className="sign-out" disabled={action.pending} onClick={() => void action.run(signOut)}><LogOut size={16} aria-hidden="true" />Sign out</Button>
         </div>
       </header>
-      {moduleId && <nav className="course-nav" aria-label="Module navigation">
-        <NavLink end to={modulePath}>Overview</NavLink>
-        <NavLink to={modulePath + '/content'}>Content</NavLink>
-        <NavLink to={modulePath + '/assessments'}>Assessments</NavLink>
-        <NavLink to={modulePath + '/gradebook'}>Gradebook</NavLink>
-        <NavLink to={modulePath + '/announcements'}>Announcements</NavLink>
-        {session.user.role === 'LECTURER' && <><NavLink to={modulePath + '/roster'}>Roster</NavLink><NavLink to={modulePath + '/analytics'}>Analytics</NavLink></>}
-      </nav>}
       <main id="main-content" className="content" tabIndex={-1}><ErrorMessage message={action.error} />{children}</main>
     </div>
+    <Toaster />
   </div>;
-}
-
-function Profile({ session }: { session: Session }) {
-  return <><Heading title="Profile" /><section className="panel profile"><dl><dt>Name</dt><dd>{session.user.displayName}</dd><dt>Email</dt><dd>{session.user.email}</dd><dt>Role</dt><dd>{roleNames[session.user.role]}</dd></dl><Link className="button secondary" to="/change-password">Change password</Link></section></>;
 }
 
 function App() {
@@ -129,8 +153,8 @@ function App() {
   }, 'session');
   useEffect(() => {
     function expire() { setExpired(true); setSession(null); }
-    window.addEventListener('lms-session-expired', expire);
-    return () => window.removeEventListener('lms-session-expired', expire);
+    window.addEventListener('session-expired', expire);
+    return () => window.removeEventListener('session-expired', expire);
   }, []);
   const userSession = session === undefined ? restore.value : session;
   const update = (current: Session) => { setExpired(false); setSession(current); };
@@ -144,42 +168,45 @@ function App() {
   if (userSession.mustChangePassword) {
     return <Routes><Route path="/change-password" element={<AccountForm key="temporary" session={userSession} expired={false} setSession={update} signOut={signOut} />} /><Route path="*" element={<Navigate to="/change-password" replace />} /></Routes>;
   }
-  const fallback = landing(userSession);
+  const s = userSession;
   return <Routes>
-    <Route path="/change-password" element={<AccountForm key="change" session={userSession} expired={false} setSession={update} />} />
-    <Route path="*" element={<Layout session={userSession} signOut={signOut}><Routes>
-      <Route path="/profile" element={<Profile session={userSession} />} />
-      {userSession.user.role === 'ADMIN' ? <>
-        <Route path="/admin/users" element={<AdminUsers csrf={userSession.csrfToken} />} />
-        <Route path="/admin/modules" element={<AdminModules csrf={userSession.csrfToken} />} />
-        <Route path="/admin/modules/:moduleId/enrolments" element={<AdminEnrolments csrf={userSession.csrfToken} />} />
-        <Route path="/admin/audit" element={<AdminAudit />} />
-      </> : <>
-        <Route path="/modules" element={<ModuleList session={userSession} />} />
-        <Route path="/modules/:moduleId" element={<ModuleDetail session={userSession} />} />
-        <Route path="/modules/:moduleId/content" element={<TopicList session={userSession} />} />
-        <Route path="/modules/:moduleId/content/:topicId" element={<TopicDetail session={userSession} />} />
-        <Route path="/modules/:moduleId/content/:topicId/materials/:materialId" element={<MaterialDetail session={userSession} />} />
-        <Route path="/modules/:moduleId/assessments" element={<AssessmentList session={userSession}/>}/>
-        <Route path="/modules/:moduleId/gradebook" element={<Gradebook session={userSession}/>}/>
-        <Route path="/modules/:moduleId/announcements" element={<Announcements session={userSession}/>}/>
-        {userSession.user.role === 'LECTURER' ? <>
-          <Route path="/modules/:moduleId/roster" element={<ModuleRoster />} />
-          <Route path="/modules/:moduleId/assessments/new" element={<AssessmentEdit session={userSession} fresh/>}/>
-          <Route path="/modules/:moduleId/assessments/:assessmentId/edit" element={<AssessmentEdit session={userSession}/>}/>
-          <Route path="/modules/:moduleId/assessments/:assessmentId/marking" element={<Marking session={userSession}/>}/>
-          <Route path="/modules/:moduleId/gradebook/:studentId" element={<Gradebook session={userSession}/>}/>
-          <Route path="/modules/:moduleId/analytics" element={<Analytics/>}/>
-          <Route path="/modules/:moduleId/analytics/settings" element={<AnalyticsSettings session={userSession}/>}/>
-        </> : <>
-          <Route path="/modules/:moduleId/assessments/:assessmentId" element={<AssessmentDetail session={userSession}/>}/>
-          <Route path="/modules/:moduleId/assessments/:assessmentId/attempt/:attemptId" element={<QuizAttempt session={userSession}/>}/>
-          <Route path="/modules/:moduleId/assessments/:assessmentId/review/:attemptId" element={<QuizAttempt session={userSession} review/>}/>
-        </>}
-      </>}
-      <Route path="*" element={<Navigate to={fallback} replace />} />
+    <Route path="/change-password" element={<AccountForm key="change" session={s} expired={false} setSession={update} />} />
+    <Route path="*" element={<Layout session={s} signOut={signOut}><Routes>
+      <Route path="/" element={<Overview session={s} />} />
+      <Route path="/applicants" element={<ApplicantList session={s} />} />
+      <Route path="/applicants/new" element={<ApplicantForm session={s} />} />
+      <Route path="/applicants/:applicantId" element={<ApplicantDetail session={s} />} />
+      <Route path="/applicants/:applicantId/edit" element={<ApplicantForm session={s} />} />
+      <Route path="/applications" element={<ApplicationList session={s} />} />
+      <Route path="/applications/new" element={<ApplicationCreate session={s} />} />
+      <Route path="/applications/:applicationId" element={<ApplicationDetail session={s} />} />
+      <Route path="/programmes" element={<ProgrammeList session={s} />} />
+      <Route path="/programmes/new" element={<ProgrammeForm session={s} />} />
+      <Route path="/programmes/:programmeId" element={<ProgrammeDetail session={s} />} />
+      <Route path="/programmes/:programmeId/edit" element={<ProgrammeForm session={s} />} />
+      <Route path="/intakes" element={<IntakeList session={s} />} />
+      <Route path="/intakes/new" element={<IntakeForm session={s} />} />
+      <Route path="/intakes/:intakeId" element={<IntakeDetail session={s} />} />
+      <Route path="/intakes/:intakeId/edit" element={<IntakeForm session={s} />} />
+      <Route path="/analytics" element={<Analytics />} />
+      {s.user.role === 'ADMIN' && <Route path="/activity" element={<ActivityLog />} />}
+      <Route path="/infrastructure" element={<Infrastructure />} />
+      <Route path="/settings" element={<SettingsPage session={s} />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes></Layout>} />
   </Routes>;
 }
 
-createRoot(document.getElementById('root')!).render(<BrowserRouter><App /></BrowserRouter>);
+function Root() {
+  const [settings, setSettings] = useState<PublicSettings>(defaultBranding);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    get<PublicSettings>('/settings/public').then(value => { setDateStyle(value.dateFormat); setSettings(value); }).catch(() => undefined);
+  }, [revision]);
+  return <BrandingContext.Provider value={{ settings, refresh: () => setRevision(value => value + 1) }}>
+    <BrowserRouter><App key={settings.dateFormat} /></BrowserRouter>
+  </BrandingContext.Provider>;
+}
+
+document.documentElement.dataset.density = localStorage.getItem('table-density') ?? 'comfortable';
+createRoot(document.getElementById('root')!).render(<Root />);

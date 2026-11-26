@@ -18,7 +18,6 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY package.json ./
 COPY migrations/ ./migrations/
 COPY --from=build /app/dist ./dist/
-RUN mkdir -p /app/.data/uploads && chown -R node:node /app/.data
 USER node
 EXPOSE 3000
 STOPSIGNAL SIGTERM

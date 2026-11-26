@@ -2,36 +2,32 @@ services:
   db:
     image: postgres:18-alpine
     environment:
-      POSTGRES_USER: lms
+      POSTGRES_USER: admissions
       POSTGRES_PASSWORD: local-postgres-only
-      POSTGRES_DB: lms
+      POSTGRES_DB: admissions
     ports:
       - "127.0.0.1:55432:5432"
     volumes:
-      - database:/var/lib/postgresql
+      - admissions-database:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 3s
       timeout: 3s
       retries: 15
   app:
-    image: ${LMS_IMAGE:-cfs-mini-lms:dev}
+    image: ${ADMISSIONS_IMAGE:-cfs-admissions:dev}
     build: .
     env_file:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgres://lms:local-postgres-only@db:5432/lms
+      DATABASE_URL: postgres://admissions:local-postgres-only@db:5432/admissions
       NODE_ENV: development
       PORT: 3000
-      UPLOAD_DIR: /app/.data/uploads
     ports:
       - "127.0.0.1:3000:3000"
-    volumes:
-      - uploads:/app/.data/uploads
     depends_on:
       db:
         condition: service_healthy
 volumes:
-  database:
-  uploads:
+  admissions-database:

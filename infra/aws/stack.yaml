@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CFS Learn lab deployment with an ALB, two availability zones, EC2 Auto Scaling, private PostgreSQL, and S3.
+Description: CFS Admissions lab deployment with an ALB, two Availability Zones, EC2 Auto Scaling, shared private PostgreSQL, and CloudWatch Logs.
 Parameters:
   ResourcePrefix:
     Type: String
-    Default: cfs-learn
+    Default: cfs-admissions
     AllowedPattern: '[a-z][a-z0-9-]{2,17}[a-z0-9]'
   ClassSerial:
     Type: Number
@@ -58,6 +58,16 @@ Parameters:
     Type: String
     Default: 'true'
     AllowedValues: ['true', 'false']
+  StudentAdminNumber:
+    Type: String
+    Default: ''
+    Description: Optional student admin number shown in the application sidebar and Infrastructure Status page.
+    AllowedPattern: '[A-Za-z0-9-]{0,20}'
+  AppEnvironment:
+    Type: String
+    Default: aws-lab
+    Description: Environment label shown on the Infrastructure Status page.
+    AllowedPattern: '[a-z0-9-]{1,30}'
   CpuTarget:
     Type: Number
     Default: 50
@@ -166,13 +176,6 @@ Resources:
   RouteDataB:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: {SubnetId: !Ref DataB, RouteTableId: !Ref PrivateRoutes}
-  S3Endpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcEndpointType: Gateway
-      VpcId: !Ref Vpc
-      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
-      RouteTableIds: [!Ref PublicRoutes, !Ref PrivateRoutes]
   AlbGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -195,39 +198,10 @@ Resources:
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref WebGroup}
-  Uploads:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      OwnershipControls:
-        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
-  UploadsPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref Uploads
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: DenyInsecureTransport
-            Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
-            Resource: [!GetAtt Uploads.Arn, !Sub '${Uploads.Arn}/*']
-            Condition:
-              Bool: {'aws:SecureTransport': 'false'}
   DatabaseSubnets:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: Two private subnets for CFS Learn PostgreSQL
+      DBSubnetGroupDescription: Two private subnets for the shared admissions PostgreSQL database
       SubnetIds: [!Ref DataA, !Ref DataB]
   Database:
     Type: AWS::RDS::DBInstance
@@ -239,10 +213,10 @@ Resources:
       StorageType: gp3
       StorageEncrypted: true
       DBInstanceClass: !Ref DatabaseClass
-      DBName: minilms
+      DBName: admissions
       Engine: postgres
       EngineVersion: !If [PinDatabaseVersion, !Ref PostgresEngineVersion, !Ref 'AWS::NoValue']
-      MasterUsername: lms_admin
+      MasterUsername: admissions_admin
       ManageMasterUserPassword: true
       DBSubnetGroupName: !Ref DatabaseSubnets
       VPCSecurityGroups: [!Ref DatabaseGroup]
@@ -306,7 +280,7 @@ Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/cfs-learn/${ResourcePrefix}'
+      LogGroupName: !Sub '/cfs-admissions/${ResourcePrefix}'
       RetentionInDays: 14
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -329,13 +303,13 @@ Resources:
               dnf -y install docker jq
               systemctl enable --now docker
               systemctl enable --now amazon-ssm-agent || true
-              install -d -m 0750 /etc/cfs-learn
-              curl --retry 4 --fail --silent --show-error https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /etc/cfs-learn/rds-ca.pem
-              chmod 0444 /etc/cfs-learn/rds-ca.pem
+              install -d -m 0750 /etc/cfs-admissions
+              curl --retry 4 --fail --silent --show-error https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /etc/cfs-admissions/rds-ca.pem
+              chmod 0444 /etc/cfs-admissions/rds-ca.pem
               token=$(curl --fail --silent --show-error -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
               instance_id=$(curl --fail --silent --show-error -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/instance-id)
               zone=$(curl --fail --silent --show-error -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/placement/availability-zone)
-              cat > /etc/cfs-learn/runtime.env <<ENV
+              cat > /etc/cfs-admissions/runtime.env <<ENV
               NODE_ENV=production
               PORT=3000
               APP_ORIGIN=${Origin}
@@ -343,8 +317,8 @@ Resources:
               TRUST_PROXY=true
               AWS_REGION=${AWS::Region}
               SECRET_ID=${AppSecretId}
-              STORAGE_DRIVER=s3
-              S3_BUCKET=${Uploads}
+              APP_ENVIRONMENT=${AppEnvironment}
+              STUDENT_ADMIN_NUMBER=${StudentAdminNumber}
               INSTANCE_ID=$instance_id
               AVAILABILITY_ZONE=$zone
               ENV
@@ -356,23 +330,23 @@ Resources:
               fi
               docker pull '${AppImage}'
               if [[ -n '${RegistrySecretId}' ]]; then docker logout ghcr.io; fi
-              cat > /etc/systemd/system/cfs-learn.service <<UNIT
+              cat > /etc/systemd/system/cfs-admissions.service <<UNIT
               [Unit]
-              Description=CFS Learn application container
+              Description=CFS Admissions application container
               After=docker.service network-online.target
               Requires=docker.service
               [Service]
               Restart=on-failure
               RestartSec=12
               TimeoutStopSec=35
-              ExecStartPre=-/usr/bin/docker rm -f cfs-learn
-              ExecStart=/usr/bin/docker run --rm --name cfs-learn --network host --env-file /etc/cfs-learn/runtime.env --mount type=bind,src=/etc/cfs-learn/rds-ca.pem,dst=/app/certs/rds-ca.pem,readonly --log-driver awslogs --log-opt awslogs-region=${AWS::Region} --log-opt awslogs-group=${LogGroup} --log-opt awslogs-stream=$instance_id ${AppImage}
-              ExecStop=/usr/bin/docker stop --time 30 cfs-learn
+              ExecStartPre=-/usr/bin/docker rm -f cfs-admissions
+              ExecStart=/usr/bin/docker run --rm --name cfs-admissions --network host --env-file /etc/cfs-admissions/runtime.env --mount type=bind,src=/etc/cfs-admissions/rds-ca.pem,dst=/app/certs/rds-ca.pem,readonly --log-driver awslogs --log-opt awslogs-region=${AWS::Region} --log-opt awslogs-group=${LogGroup} --log-opt awslogs-stream=$instance_id ${AppImage}
+              ExecStop=/usr/bin/docker stop --time 30 cfs-admissions
               [Install]
               WantedBy=multi-user.target
               UNIT
               systemctl daemon-reload
-              systemctl enable --now cfs-learn
+              systemctl enable --now cfs-admissions
             - Origin: !If [UseTls, !Sub 'https://${PublicHostname}', !Sub 'http://${LoadBalancer.DNSName}']
               SecureCookie: !If [UseTls, 'true', 'false']
   WebFleet:
@@ -423,8 +397,6 @@ Outputs:
     Value: !GetAtt Database.Endpoint.Address
   DatabaseMasterSecret:
     Value: !GetAtt Database.MasterUserSecret.SecretArn
-  UploadBucket:
-    Value: !Ref Uploads
   MigrationInstanceId:
     Condition: MigrationOn
     Value: !Ref MigrationHost

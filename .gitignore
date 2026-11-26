@@ -4,7 +4,7 @@
 /coverage/
 /playwright-report/
 /test-results/
-/cfs-mini-lms-linux-*.tar.gz
+/cfs-admissions-linux-*.tar.gz
 /.data/
 .env
 .env.*

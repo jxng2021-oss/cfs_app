@@ -3,23 +3,19 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import express, { Router, type ErrorRequestHandler } from 'express';
 import helmet from 'helmet';
-import { adminRoutes } from './admin.js';
-import { authRoutes, type Services } from './auth.js';
-import { contentRoutes } from './content.js';
-import { ApiError, notFound } from './http.js';
-import { moduleRoutes } from './modules.js';
-import { createStorage } from './storage.js';
-import { fileRoutes } from './files.js';
-import { assessmentConfigRoutes } from './assessment-config.js';
-import { assignmentRoutes } from './assignment-routes.js';
-import { quizRoutes } from './quiz-routes.js';
-import { gradeRoutes } from './grade-routes.js';
-import { gradebookRoutes } from './gradebook.js';
-import { releaseRoutes } from './release-routes.js';
+import { activityRoutes } from './activity.js';
 import { analyticsRoutes } from './analytics.js';
-import { announcementRoutes } from './announcements.js';
+import { applicantRoutes } from './applicants.js';
+import { applicationRoutes } from './applications.js';
+import { authRoutes, type Services } from './auth.js';
+import { ApiError, notFound } from './http.js';
+import { currentIdentity, infrastructureRoutes, markHealthCheck, publicInfrastructureRoutes } from './infrastructure.js';
+import { intakeRoutes } from './intakes.js';
+import { programmeRoutes } from './programmes.js';
+import { publicSettingsRoute, settingsRoutes } from './settings.js';
+import { userRoutes } from './users.js';
 
-export function createApp(services: Services, webRoot = resolve('dist/web'), storage = createStorage(services.config)) {
+export function createApp(services: Services, webRoot = resolve('dist/web')) {
   const app = express();
   app.disable('x-powered-by');
   if (services.config.TRUST_PROXY) app.set('trust proxy', 1);
@@ -32,22 +28,27 @@ export function createApp(services: Services, webRoot = resolve('dist/web'), sto
     const start = performance.now();
     res.locals.requestId = requestId;
     res.set('X-Request-Id', requestId);
-    const { INSTANCE_ID, AVAILABILITY_ZONE } = process.env;
-    if (INSTANCE_ID && AVAILABILITY_ZONE && /^i-[a-f0-9]+$/.test(INSTANCE_ID) && /^[a-z0-9-]+$/.test(AVAILABILITY_ZONE)) {
-      res.set('X-Served-By', INSTANCE_ID + ' ' + AVAILABILITY_ZONE);
-    }
+    const { instanceId, availabilityZone } = currentIdentity();
+    // Shows which instance behind the load balancer answered, e.g. `curl -I <alb>/health`.
+    if (instanceId) res.set('X-Served-By', instanceId + (availabilityZone ? ' ' + availabilityZone : ''));
     res.once('finish', () => {
       if (services.config.NODE_ENV === 'test') return;
       console.info(JSON.stringify({
         requestId, method: req.method, route: req.route?.path ?? 'unmatched', status: res.statusCode,
         durationMs: Math.round(performance.now() - start), actorId: res.locals.viewer?.user.id,
-        instanceId: process.env.INSTANCE_ID, availabilityZone: process.env.AVAILABILITY_ZONE,
+        instanceId: currentIdentity().instanceId, availabilityZone: currentIdentity().availabilityZone,
       }));
     });
     next();
   });
-  app.get('/health', (_req, res) => res.set('Cache-Control', 'no-store').json({ status: 'ok' }));
+  // Liveness for the load balancer: cheap, no database call, so a slow database never takes every instance out of service.
+  app.get('/health', (_req, res) => {
+    markHealthCheck();
+    res.set('Cache-Control', 'no-store').json({ status: 'ok', instanceId: currentIdentity().instanceId });
+  });
+  // Readiness: the instance can reach the shared database.
   app.get('/health/ready', async (_req, res) => {
+    markHealthCheck();
     let timeout: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
@@ -65,12 +66,12 @@ export function createApp(services: Services, webRoot = resolve('dist/web'), sto
   const api = Router();
   api.use(express.json({ limit: '1mb' }));
   api.use(
-    authRoutes(services), adminRoutes(services), moduleRoutes(services), contentRoutes(services), fileRoutes(services,storage),
-    assessmentConfigRoutes(services), assignmentRoutes(services), quizRoutes(services), gradeRoutes(services), gradebookRoutes(services),
-    releaseRoutes(services), analyticsRoutes(services), announcementRoutes(services),
+    publicSettingsRoute(services), publicInfrastructureRoutes(),
+    authRoutes(services),
+    applicantRoutes(services), applicationRoutes(services), programmeRoutes(services), intakeRoutes(services),
+    analyticsRoutes(services), activityRoutes(services), settingsRoutes(services), userRoutes(services), infrastructureRoutes(services),
   );
-  app.use('/api/v1', api);
-  app.use('/api', notFound);
+  app.use('/api', api, notFound);
   app.use('/health', notFound);
 
   if (existsSync(resolve(webRoot, 'index.html'))) {

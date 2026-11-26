@@ -47,3 +47,16 @@ export const safeText = (max: number) => z.string().trim().min(1).max(max);
 export const email = z.string().trim().toLowerCase().pipe(z.email().max(254));
 export const version = z.number().int().positive();
 export const empty = z.strictObject({});
+export const direction = z.enum(['asc', 'desc']).default('asc');
+export const optionalText = (max: number) => z.string().trim().max(max).optional().transform(value => value || undefined);
+
+/** ORDER BY from a whitelisted sort key; the id tiebreak keeps pagination stable. */
+export function orderBy<K extends string>(columns: Record<K, string>, key: K, dir: 'asc' | 'desc', tiebreak: string) {
+  return `ORDER BY ${columns[key]} ${dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST, ${tiebreak}`;
+}
+
+/** Converts a unique-violation into a 409 with a friendly message. */
+export function conflictOn(error: unknown, constraint: string, code: string, message: string): never {
+  if (pgError(error, '23505', constraint)) throw new ApiError(409, code, message);
+  throw error;
+}
